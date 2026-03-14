@@ -153,5 +153,5 @@ After running migrations:
 | `no such table: _migrations` | First migration run | Normal — `_migrations` table is auto-created |
 | `duplicate column name` | Migration already partially applied | Check `db:status`, mark migration as applied manually if needed |
 | `SQLITE_ERROR: syntax error` | Invalid SQL in migration file | Fix the SQL; never edit an already-applied migration |
-| `LIBSQL_CLIENT_HTTP: Unauthorized` | Wrong auth token | Check `TURSO_AUTH_TOKEN` in `.env` |
+| `LIBSQL_CLIENT_HTTP: Unauthorized` | Wrong auth token when using sqld | Check `LIBSQL_AUTH_TOKEN` in `.env` — not required for embedded file mode |
 | Migration skipped | File naming gap (e.g. `001`, `003` — no `002`) | Rename files to close the gap, or investigate why `002` is missing |

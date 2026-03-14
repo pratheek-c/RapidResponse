@@ -75,13 +75,18 @@ When adding a dependency:
 
 - **File:** `backend/src/agents/novaAgent.ts`
 - Nova Sonic handles the full caller interaction. It is NOT just a transcription tool — it speaks back to the caller and follows a protocol-driven conversation.
-- Uses `@aws-sdk/client-bedrock-runtime` with `InvokeModelWithBidirectionalStream` (or the `ConverseStream` API once Nova Sonic supports it)
-- Audio format: PCM 16-bit, 16kHz, mono
+- Uses `@aws-sdk/client-bedrock-runtime` with `InvokeModelWithBidirectionalStreamCommand`
+- Requires `@smithy/node-http-handler` (`NodeHttp2Handler`) — Nova Sonic uses HTTP/2 only
+- Audio format: PCM 16-bit, 16kHz mono input / 24kHz mono output (`audio/lpcm`, base64-encoded)
+- Audio frames are ~32ms each; audio data is base64-encoded in every `audioInput` event
+- Maximum session duration: 8 minutes. Implement session renewal at 7m30s for long calls
 - The Nova Sonic system prompt includes: role definition, city/department context, current RAG protocol context (injected per call), tool definitions
 - Nova Sonic uses **tool use** to trigger backend actions:
   - `classify_incident(type, priority)` — fires when AI has enough info to classify
   - `get_protocol(query)` — requests a RAG lookup from LanceDB
   - `dispatch_unit(incident_id, unit_type)` — requests dispatcher notification
+- Tool result must be sent on `contentEnd` with `stopReason: "TOOL_USE"` — **not** on the `toolUse` event itself
+- On `{ "interrupted": true }` in a `textOutput` block, flush the audio output queue immediately (barge-in)
 - **Do NOT** use the OpenAI SDK or OpenAI Realtime API. AWS Bedrock SDK only.
 
 ### AWS Bedrock — Titan Embeddings v2
@@ -94,7 +99,8 @@ When adding a dependency:
 ### LanceDB
 
 - **File:** `backend/src/db/lancedb.ts`
-- Embedded/local vector database. Data directory: `LANCEDB_PATH` env var (default `./data/lancedb`)
+- Open-source embedded vector database. Package: `@lancedb/lancedb` (not the legacy `vectordb` package). Peer dep: `apache-arrow >=15.0.0 <=18.1.0`.
+- Data directory: `LANCEDB_PATH` env var (default `./data/lancedb`)
 - Three collections:
 
   | Collection | Purpose |
@@ -103,14 +109,17 @@ When adding a dependency:
   | `incidents_history` | Past incident summaries for pattern matching |
   | `locations` | Geocoded addresses with S2 cell IDs for proximity search |
 
-- S2 geometry is used for location indexing. S2 cell tokens are computed server-side using the `s2-geometry` npm package
+- S2 geometry is used for location indexing. S2 cell tokens are stored as `Utf8` strings and used as pre-filters alongside cosine vector search. Use `s2-geometry` (pure JS, no native bindings) — do **not** use the archived `mapbox/node-s2` package.
+- Always use `distanceType("cosine")` — must match at both index creation and query time. The default `"l2"` is incorrect for Titan embeddings.
 - **LanceDB is for vectors only.** Never store structured relational data in LanceDB.
 
-### libSQL (Turso)
+### libSQL (Open-Source Embedded)
 
 - **File:** `backend/src/db/libsql.ts`
 - Client: `@libsql/client`
-- Connection via `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`
+- **Default mode: embedded file** — `LIBSQL_URL=file:./data/rapidresponse.db`. No server, no cloud account required. Data lives on disk next to the app.
+- **Optional networked mode:** run the open-source `sqld` server (`ghcr.io/tursodatabase/libsql-server`) and set `LIBSQL_URL=http://localhost:8080`. Set `LIBSQL_AUTH_TOKEN` only if sqld is configured with auth.
+- Connection: `createClient({ url: env.LIBSQL_URL, authToken: env.LIBSQL_AUTH_TOKEN })` — works for both `file:` and `http:` schemes identically.
 - All structured data lives here: incidents, transcriptions, units, dispatches
 - Schema is managed via numbered SQL migration files in `backend/src/db/migrations/`
 - **libSQL is for structured relational data only.** Never put embeddings or binary blobs here.
@@ -231,7 +240,6 @@ These are hard rules. Never violate them.
 - LanceDB: use a temp directory (`/tmp/lancedb-test-{uuid}`) and clean up after each test
 - S3: mock `@aws-sdk/client-s3` — never make real S3 calls in tests
 - No real AWS credentials should be required to run the test suite
-
 ---
 
 ## Environment Variables
@@ -243,15 +251,17 @@ All required env vars are documented in `.env.example`. The canonical list:
 | `AWS_REGION` | All AWS services | e.g. `us-east-1` |
 | `AWS_ACCESS_KEY_ID` | All AWS services | IAM key |
 | `AWS_SECRET_ACCESS_KEY` | All AWS services | IAM secret |
-| `BEDROCK_NOVA_SONIC_MODEL_ID` | `novaAgent.ts` | e.g. `amazon.nova-sonic-v2:0` |
+| `BEDROCK_NOVA_SONIC_MODEL_ID` | `novaAgent.ts` | e.g. `amazon.nova-2-sonic-v1:0` |
 | `BEDROCK_TITAN_EMBED_MODEL_ID` | `ragService.ts` | Titan Embeddings v2 model ID |
-| `TURSO_DATABASE_URL` | `libsql.ts` | `libsql://...turso.io` |
-| `TURSO_AUTH_TOKEN` | `libsql.ts` | Turso auth token |
+| `LIBSQL_URL` | `libsql.ts` | `file:./data/rapidresponse.db` (default) or `http://localhost:8080` (sqld) |
+| `LIBSQL_AUTH_TOKEN` | `libsql.ts` | Optional — only required when using sqld with auth enabled |
 | `S3_BUCKET_NAME` | `storageService.ts` | S3 bucket for recordings |
 | `S3_RECORDINGS_PREFIX` | `storageService.ts` | Default: `recordings/` |
 | `LANCEDB_PATH` | `lancedb.ts` | Local path, default `./data/lancedb` |
 | `PORT` | `server.ts` | HTTP server port, default `3000` |
 | `FRONTEND_URL` | `server.ts` | CORS allowed origin |
+| `DISPATCH_CITY` | `novaAgent.ts` | City name injected into Nova Sonic system prompt |
+| `DISPATCH_DEPT` | `novaAgent.ts` | Department name injected into Nova Sonic system prompt |
 
 ---
 

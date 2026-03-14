@@ -17,7 +17,7 @@ RapidResponse.ai is a municipal-grade 911 emergency response platform where an A
 
 - Live bidirectional voice call via WebSocket — callers speak from any browser
 - AWS Nova Sonic 2 (Bedrock) handles the full caller interaction autonomously
-- Real-time transcription saved per-utterance to libSQL (Turso)
+- Real-time transcription saved per-utterance to libSQL (open-source embedded)
 - Emergency protocols (MPDS-style) stored as vectors in LanceDB; queried via RAG on every call
 - Incident classification: type (medical / fire / law enforcement / hazmat / other) and priority 1–5
 - S2 geometry indexing in LanceDB for fast caller location proximity queries
@@ -57,8 +57,8 @@ RapidResponse.ai is a municipal-grade 911 emergency response platform where an A
 │  └─────────────────────┘                                        │
 │                                                                 │
 │  ┌──────────────┐  ┌────────────────┐  ┌─────────────────┐    │
-│  │   libSQL     │  │    LanceDB     │  │    AWS S3       │    │
-│  │  (Turso)     │  │  + S2 Geometry │  │  Audio storage  │    │
+│  │   libSQL           │  │    LanceDB     │  │    AWS S3       │    │
+│  │  (embedded file)   │  │  + S2 Geometry │  │  Audio storage  │    │
 │  │  incidents   │  │  protocols     │  │  recordings/    │    │
 │  │  transcripts │  │  incidents     │  │  {incident_id}/ │    │
 │  │  units       │  │  locations     │  │  *.webm         │    │
@@ -92,11 +92,11 @@ RapidResponse.ai is a municipal-grade 911 emergency response platform where an A
 | Language | TypeScript (strict) | Full stack type safety |
 | Voice AI | AWS Bedrock Nova Sonic 2 | Bidirectional voice agent |
 | Embeddings | AWS Bedrock Titan Embeddings v2 | Protocol + incident vectorization |
-| Vector DB | [LanceDB](https://lancedb.com) + S2 | Protocol RAG, location proximity search |
-| Relational DB | [libSQL / Turso](https://turso.tech) | Incidents, transcriptions, units, dispatches |
+| Vector DB | [LanceDB](https://lancedb.com) (`@lancedb/lancedb`) + S2 | Protocol RAG, location proximity search |
+| Relational DB | [libSQL](https://github.com/tursodatabase/libsql) (open-source, embedded file mode) | Incidents, transcriptions, units, dispatches |
 | Audio Storage | AWS S3 | Raw call recordings |
 | Frontend | React 18 + TypeScript + Vite | Dispatcher dashboard |
-| HTTP/WS Server | Bun native HTTP + `ws` | WebSocket call handling + REST API |
+| HTTP/WS Server | Bun native `Bun.serve()` | WebSocket call handling + REST API |
 | Deployment | AWS ECS (Fargate) + ALB | Containerized backend |
 
 ---
@@ -133,7 +133,7 @@ rapidresponse/
 │   │   │   ├── storageService.ts         # S3 audio upload/download
 │   │   │   └── ragService.ts             # LanceDB vector search
 │   │   ├── db/
-│   │   │   ├── libsql.ts           # Turso client, schema types
+│   │   │   ├── libsql.ts           # libSQL client (embedded file or sqld)
 │   │   │   ├── migrations/         # SQL migration files (numbered)
 │   │   │   │   ├── 001_initial.sql
 │   │   │   │   └── 002_add_indexes.sql
@@ -183,9 +183,10 @@ rapidresponse/
 
 - [Bun](https://bun.sh) >= 1.1.0
 - AWS account with Bedrock access (Nova Sonic 2 + Titan Embeddings v2 enabled in your region)
-- [Turso CLI](https://docs.turso.tech/cli/installation) and a Turso database
 - AWS S3 bucket for recordings
 - Docker (for deployment)
+
+> **No cloud database account required.** libSQL runs as an embedded file by default (`file:./data/rapidresponse.db`). Optionally run the open-source [`sqld`](https://github.com/tursodatabase/libsql) server via Docker for networked/multi-client access.
 
 ---
 
@@ -202,15 +203,17 @@ cp .env.example .env
 | `AWS_REGION` | AWS | Region where Bedrock is enabled (e.g. `us-east-1`) |
 | `AWS_ACCESS_KEY_ID` | AWS | IAM access key with Bedrock + S3 permissions |
 | `AWS_SECRET_ACCESS_KEY` | AWS | IAM secret key |
-| `BEDROCK_NOVA_SONIC_MODEL_ID` | Bedrock | Nova Sonic model ID (e.g. `amazon.nova-sonic-v2:0`) |
-| `BEDROCK_TITAN_EMBED_MODEL_ID` | Bedrock | Titan Embeddings model ID |
-| `TURSO_DATABASE_URL` | libSQL | Turso database URL (`libsql://...`) |
-| `TURSO_AUTH_TOKEN` | libSQL | Turso auth token |
+| `BEDROCK_NOVA_SONIC_MODEL_ID` | Bedrock | Nova Sonic 2 model ID (`amazon.nova-2-sonic-v1:0`) |
+| `BEDROCK_TITAN_EMBED_MODEL_ID` | Bedrock | Titan Embeddings v2 model ID |
+| `LIBSQL_URL` | libSQL | `file:./data/rapidresponse.db` (default) or `http://localhost:8080` (sqld) |
+| `LIBSQL_AUTH_TOKEN` | libSQL | Optional — only set when using sqld with auth enabled |
 | `S3_BUCKET_NAME` | S3 | Bucket name for audio recordings |
 | `S3_RECORDINGS_PREFIX` | S3 | Object key prefix (default: `recordings/`) |
 | `LANCEDB_PATH` | LanceDB | Local path for LanceDB data dir (default: `./data/lancedb`) |
 | `PORT` | Server | HTTP server port (default: `3000`) |
 | `FRONTEND_URL` | Server | Allowed CORS origin for the dashboard |
+| `DISPATCH_CITY` | Nova Sonic | City name injected into the AI dispatcher system prompt |
+| `DISPATCH_DEPT` | Nova Sonic | Department name injected into the AI dispatcher system prompt |
 
 ---
 
@@ -230,7 +233,14 @@ This installs dependencies for the root workspace, `backend/`, and `frontend/` s
 bun run db:migrate
 ```
 
-Runs all SQL migrations in `backend/src/db/migrations/` against your Turso database in order.
+Runs all SQL migrations in `backend/src/db/migrations/` in order. By default libSQL runs as an embedded file at `./data/rapidresponse.db` — no server setup required.
+
+To use the open-source `sqld` server instead, start it via Docker and set `LIBSQL_URL`:
+
+```bash
+docker run -p 8080:8080 ghcr.io/tursodatabase/libsql-server
+# Then set LIBSQL_URL=http://localhost:8080 in .env
+```
 
 ### 3. Initialize LanceDB collections
 
@@ -380,7 +390,7 @@ Dispatcher dashboard subscribes to this SSE stream for live updates.
 
 ## Data Model
 
-### libSQL (Turso) — Structured Data
+### libSQL — Structured Data (open-source embedded)
 
 ```sql
 -- Active and historical incidents
@@ -433,9 +443,9 @@ CREATE TABLE dispatches (
 
 | Collection | Schema | Purpose |
 |---|---|---|
-| `protocols` | `id, source_file, section, chunk_text, embedding, metadata` | Emergency protocol RAG |
-| `incidents_history` | `id, summary, type, priority, embedding, s2_cell_id` | Past incident pattern matching |
-| `locations` | `id, address, lat, lng, s2_cell_id, embedding` | Geospatial proximity search |
+| `protocols` | `id, source_file, section, chunk_text, embedding[1024], priority_keywords, s2_cell_token` | Emergency protocol RAG |
+| `incidents_history` | `id, summary, type, priority, embedding[1024], s2_cell_token` | Past incident pattern matching |
+| `locations` | `id, address, lat, lng, s2_cell_token, embedding[1024]` | Geospatial proximity search |
 
 ### S3 — Object Layout
 

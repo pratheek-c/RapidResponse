@@ -27,13 +27,14 @@ Each document is:
 1. Read and parsed into plain text
 2. Split into chunks by section header (max 512 tokens, 50-token overlap)
 3. Each chunk is embedded via **AWS Bedrock Titan Embeddings v2** (`BEDROCK_TITAN_EMBED_MODEL_ID`)
-4. Upserted into the LanceDB **`protocols`** collection with fields:
+3. **Each chunk stored in LanceDB** (`@lancedb/lancedb`) **`protocols`** collection with fields:
    - `id` — UUID (`crypto.randomUUID()`)
    - `source_file` — filename of the origin document
    - `section` — detected section heading
    - `chunk_text` — raw text of the chunk
-   - `embedding` — float32[1024] vector from Titan
+   - `embedding` — `float32[1024]` vector from Titan (stored as `FixedSizeList(1024, Float32)`)
    - `priority_keywords` — extracted keywords (fire, medical, cardiac, etc.)
+   - `s2_cell_token` — optional S2 cell token if section references a location
 
 ---
 
@@ -114,4 +115,5 @@ After ingestion:
 | `ResourceNotFoundException` from Bedrock | Wrong model ID | Check `BEDROCK_TITAN_EMBED_MODEL_ID` env var |
 | `AccessDeniedException` from Bedrock | IAM policy missing | Add `bedrock:InvokeModel` to IAM policy |
 | `LanceDB table not found` | First run, no collection yet | The script auto-creates — check `LANCEDB_PATH` is writable |
+| `Cannot find module '@lancedb/lancedb'` | Package not installed | `bun add @lancedb/lancedb apache-arrow --filter backend` |
 | PDF parsing error | `pdf-parse` not installed | `bun add pdf-parse --filter backend` |

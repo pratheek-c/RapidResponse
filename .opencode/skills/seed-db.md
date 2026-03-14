@@ -21,7 +21,7 @@ Before starting, read and understand:
 2. **`backend/src/db/libsql.ts`** — libSQL client and table schema types
 3. **`backend/src/db/migrations/`** — Ensure migrations are up to date before seeding
 
-The seed script populates **libSQL (Turso)** with realistic sample data across all four tables:
+The seed script populates **libSQL (open-source embedded)** with realistic sample data across all four tables:
 - `incidents` — sample active, dispatched, and resolved incidents
 - `transcriptions` — 3–5 turns per incident (caller + AI utterances)
 - `units` — police, fire, and EMS units with varying statuses
@@ -42,8 +42,8 @@ The seed script populates **libSQL (Turso)** with realistic sample data across a
    Never seed against a schema that is behind — the seed script will fail on missing columns.
 
 2. **Check environment variables**
-   - `TURSO_DATABASE_URL` — must be set
-   - `TURSO_AUTH_TOKEN` — must be set
+   - `LIBSQL_URL` — must be set (default: `file:./data/rapidresponse.db`)
+   - `LIBSQL_AUTH_TOKEN` — only required when using sqld with auth enabled
 
 3. **Run the seed script**
 
@@ -146,6 +146,6 @@ The seed script populates **libSQL (Turso)** with realistic sample data across a
 | Error | Likely Cause | Fix |
 |---|---|---|
 | `SQLITE_ERROR: no such table` | Migrations not run | Run `bun run db:migrate` first |
-| `LIBSQL_CLIENT_HTTP: Unauthorized` | Wrong auth token | Check `TURSO_AUTH_TOKEN` |
-| `connection refused` | Wrong database URL | Check `TURSO_DATABASE_URL` |
+| `LIBSQL_CLIENT_HTTP: Unauthorized` | sqld auth token missing | Check `LIBSQL_AUTH_TOKEN` — not needed for embedded file mode |
+| `connection refused` | sqld not running (networked mode) | Start sqld or switch to `LIBSQL_URL=file:./data/rapidresponse.db` |
 | Duplicate key errors | Non-idempotent seed | Check `INSERT OR IGNORE` logic in `seed.ts` |
