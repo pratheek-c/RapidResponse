@@ -17,7 +17,8 @@ export type IncidentType =
 export type Incident = {
   id: string;
   caller_id: string;
-  caller_location: string;
+  caller_location: string;  // "lat, lng" GPS string
+  caller_address: string;   // reverse-geocoded human address
   status: IncidentStatus;
   type: IncidentType | null;
   priority: IncidentPriority | null;
@@ -81,7 +82,8 @@ export type SseEvent = {
 export type WsCallStartMessage = {
   type: "call_start";
   caller_id: string;
-  location: string;
+  location: string;   // "lat, lng" GPS string
+  address: string;    // reverse-geocoded human address
 };
 
 export type WsAudioChunkMessage = {

@@ -23,7 +23,7 @@ import type {
 import { createIncident, updateIncident } from "../services/incidentService.ts";
 import { saveAgentTurn, saveCallerTurn, exportTranscript } from "../services/transcriptionService.ts";
 import { uploadTranscript, uploadAudioChunk } from "../services/storageService.ts";
-import { startNovaSession, type NovaSession } from "../agents/novaAgent.ts";
+import { startNovaSession, type NovaSession, type AvailableUnitSummary } from "../agents/novaAgent.ts";
 
 // ---------------------------------------------------------------------------
 // Per-connection state
@@ -123,6 +123,7 @@ async function handleCallStart(
     const incident = await createIncident({
       caller_id: msg.caller_id,
       caller_location: msg.location,
+      caller_address: msg.address ?? msg.location,
     });
     incident_id = incident.id;
   } catch (err) {
@@ -138,13 +139,38 @@ async function handleCallStart(
 
   const callStartMs = Date.now();
 
+  // Fetch nearby units from mock data to inject into agent's system prompt
+  let available_units: AvailableUnitSummary[] = [];
+  try {
+    // Parse "lat, lng" from msg.location if present
+    const coordParts = msg.location.split(",").map((s) => parseFloat(s.trim()));
+    if (coordParts.length === 2 && !isNaN(coordParts[0]) && !isNaN(coordParts[1])) {
+      const [lat, lng] = coordParts;
+      const { getMockUnitsWithDistance } = await import("../routes/units.ts");
+      const mockUnits = await getMockUnitsWithDistance(lat, lng);
+      available_units = mockUnits.map((u) => ({
+        unit_code: u.unit_code,
+        type: u.type,
+        status: u.status,
+        zone: u.zone,
+        distance_km: u.distance_km,
+        eta_minutes: u.eta_minutes,
+        crew_count: u.crew.length,
+      }));
+    }
+  } catch {
+    // non-fatal — proceed without unit context
+  }
+
   // Open Nova Sonic session
   let session: NovaSession;
   try {
     session = await startNovaSession({
       incident_id,
       caller_location: msg.location,
+      caller_address: msg.address ?? msg.location,
       protocol_context: "", // RAG context will be fetched dynamically via get_protocol tool
+      available_units,
       callbacks: {
         onAudioOutput(base64Pcm: string) {
           if (base64Pcm === "__FLUSH__") {

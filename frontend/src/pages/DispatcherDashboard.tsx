@@ -15,12 +15,12 @@ export function DispatcherDashboard() {
 
   const selectedIncident = incidents.find((i) => i.id === selectedId) ?? null;
 
-  const handleDispatch = async (incidentId: string, unitId: string) => {
+  const handleDispatch = async (incidentId: string, unitType: string) => {
     try {
       await fetch(`${API_BASE}/dispatch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ incident_id: incidentId, unit_id: unitId }),
+        body: JSON.stringify({ incident_id: incidentId, unit_type: unitType }),
       });
       await refetchUnits();
     } catch {
@@ -173,7 +173,7 @@ export function DispatcherDashboard() {
         >
           UNITS
         </div>
-        <UnitPanel units={units} />
+        <UnitPanel units={units} incidentLocation={selectedIncident?.caller_location ?? null} />
       </aside>
     </div>
   );

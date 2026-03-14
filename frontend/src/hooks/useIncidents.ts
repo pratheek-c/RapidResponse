@@ -32,27 +32,27 @@ export function useIncidents() {
     es.onopen = () => setConnected(true);
     es.onerror = () => setConnected(false);
 
-    es.onmessage = (ev: MessageEvent<string>) => {
+    // All SSE events are named (event: <type>\ndata: ...) so we must use
+    // addEventListener per type, not onmessage (which only fires for unnamed events).
+    const handleIncidentEvent = (ev: MessageEvent<string>) => {
       try {
         const event = JSON.parse(ev.data) as SseEvent;
-        if (
-          event.type === "incident_created" ||
-          event.type === "incident_updated" ||
-          event.type === "incident_classified"
-        ) {
-          const updated = event.payload as Incident;
-          setIncidents((prev) => {
-            const idx = prev.findIndex((i) => i.id === updated.id);
-            if (idx === -1) return [updated, ...prev];
-            const next = [...prev];
-            next[idx] = updated;
-            return next;
-          });
-        }
+        const updated = event.payload as Incident;
+        setIncidents((prev) => {
+          const idx = prev.findIndex((i) => i.id === updated.id);
+          if (idx === -1) return [updated, ...prev];
+          const next = [...prev];
+          next[idx] = updated;
+          return next;
+        });
       } catch {
         // malformed SSE data — ignore
       }
     };
+
+    es.addEventListener("incident_created", handleIncidentEvent);
+    es.addEventListener("incident_updated", handleIncidentEvent);
+    es.addEventListener("incident_classified", handleIncidentEvent);
 
     return () => {
       es.close();

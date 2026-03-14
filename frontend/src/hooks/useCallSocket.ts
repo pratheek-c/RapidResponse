@@ -109,7 +109,7 @@ export function useCallSocket() {
   // Start call
   // ---------------------------------------------------------------------------
   const startCall = useCallback(
-    async (callerId: string, location: string) => {
+    async (callerId: string, location: string, address: string) => {
       setStatus("connecting");
       setTranscript([]);
       setClassification(null);
@@ -129,7 +129,7 @@ export function useCallSocket() {
 
       ws.onopen = () => {
         setStatus("active");
-        send({ type: "call_start", caller_id: callerId, location });
+        send({ type: "call_start", caller_id: callerId, location, address });
 
         // Capture audio via MediaRecorder, emit ~32ms chunks
         const recorder = new MediaRecorder(stream, {

@@ -56,8 +56,21 @@ export type NovaSessionCallbacks = {
 export type NovaSessionOptions = {
   incident_id: string;
   caller_location: string;
+  caller_address?: string;
   protocol_context: string; // RAG-retrieved protocol text, injected into system prompt
+  available_units?: AvailableUnitSummary[]; // nearby units sorted by distance
   callbacks: NovaSessionCallbacks;
+};
+
+/** Compact unit summary injected into the Nova Sonic system prompt. */
+export type AvailableUnitSummary = {
+  unit_code: string;
+  type: string;
+  status: string;
+  zone: string;
+  distance_km: number;
+  eta_minutes: number;
+  crew_count: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -142,8 +155,24 @@ const TOOL_SPECS = [
 function buildSystemPrompt(
   incident_id: string,
   caller_location: string,
-  protocol_context: string
+  protocol_context: string,
+  caller_address?: string,
+  available_units?: AvailableUnitSummary[]
 ): string {
+  const locationLine = caller_address
+    ? `- Caller reported location: ${caller_location} (${caller_address})`
+    : `- Caller reported location: ${caller_location}`;
+
+  const unitsBlock =
+    available_units && available_units.length > 0
+      ? `\n[AVAILABLE UNITS — sorted by distance from caller]\n${available_units
+          .map(
+            (u) =>
+              `  ${u.unit_code} (${u.type.toUpperCase()}) — Status: ${u.status}, Zone: ${u.zone}, Distance: ${u.distance_km.toFixed(1)} km, ETA: ~${u.eta_minutes} min, Crew: ${u.crew_count}`
+          )
+          .join("\n")}\n[END AVAILABLE UNITS]`
+      : "";
+
   return `You are an AI-powered 911 emergency dispatcher for ${env.DISPATCH_DEPT} in ${env.DISPATCH_CITY}.
 
 Your role is to:
@@ -151,13 +180,14 @@ Your role is to:
 2. Gather essential information: nature of emergency, exact location, caller safety
 3. Classify the incident type and priority using the classify_incident tool
 4. Look up relevant response protocols using the get_protocol tool when needed
-5. Request dispatch of appropriate units using the dispatch_unit tool
+5. Request dispatch of appropriate units using the dispatch_unit tool — choose the closest available unit of the right type
 6. Keep the caller calm and provide pre-arrival instructions based on protocol guidance
 
 Current call context:
 - Incident ID: ${incident_id}
-- Caller reported location: ${caller_location}
+${locationLine}
 - City/Department: ${env.DISPATCH_CITY} / ${env.DISPATCH_DEPT}
+${unitsBlock}
 
 [PROTOCOL CONTEXT]
 ${protocol_context}
@@ -169,6 +199,7 @@ Guidelines:
 - Ask about injuries and immediate dangers
 - Stay on the line with the caller
 - Use plain, clear language — no jargon
+- When dispatching, choose the closest available unit of the appropriate type
 - If the caller is in immediate danger, prioritize safety over information gathering`;
 }
 
@@ -190,7 +221,7 @@ export type NovaSession = {
 export async function startNovaSession(
   options: NovaSessionOptions
 ): Promise<NovaSession> {
-  const { incident_id, caller_location, protocol_context, callbacks } = options;
+  const { incident_id, caller_location, caller_address, protocol_context, available_units, callbacks } = options;
 
   const client = new BedrockRuntimeClient({
     region: env.AWS_REGION,
@@ -221,7 +252,7 @@ export async function startNovaSession(
   let pendingToolInput: string = "";
 
   const promptName = crypto.randomUUID();
-  const systemPrompt = buildSystemPrompt(incident_id, caller_location, protocol_context);
+  const systemPrompt = buildSystemPrompt(incident_id, caller_location, protocol_context, caller_address, available_units);
 
   // Build the async iterable for the bidirectional stream input
   async function* buildInputStream() {

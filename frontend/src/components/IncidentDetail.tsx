@@ -7,7 +7,7 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 type Props = {
   incident: Incident;
   units: Unit[];
-  onDispatch: (incidentId: string, unitId: string) => Promise<void>;
+  onDispatch: (incidentId: string, unitType: string) => Promise<void>;
 };
 
 export function IncidentDetail({ incident, units, onDispatch }: Props) {
@@ -30,7 +30,7 @@ export function IncidentDetail({ incident, units, onDispatch }: Props) {
       .catch(() => undefined);
 
     // fetch dispatches for this incident
-    fetch(`${API_BASE}/dispatch?incident_id=${incident.id}`)
+    fetch(`${API_BASE}/dispatch/${incident.id}`)
       .then((r) => r.json())
       .then((j: { ok: boolean; data: Dispatch[] }) => {
         if (j.ok) setDispatches(j.data);
@@ -147,7 +147,7 @@ export function IncidentDetail({ incident, units, onDispatch }: Props) {
             >
               <option value="">Select available unit...</option>
               {availableUnits.map((u) => (
-                <option key={u.id} value={u.id}>
+                <option key={u.id} value={u.type}>
                   {u.unit_code} ({u.type})
                 </option>
               ))}

@@ -59,14 +59,15 @@ export async function dbCreateIncident(
 
   await db.execute({
     sql: `INSERT INTO incidents
-            (id, caller_id, caller_location, status, type, priority, summary,
+            (id, caller_id, caller_location, caller_address, status, type, priority, summary,
              created_at, updated_at, resolved_at, s3_audio_prefix, s3_transcript_key)
-          VALUES (:id, :caller_id, :caller_location, 'active', NULL, NULL, NULL,
+          VALUES (:id, :caller_id, :caller_location, :caller_address, 'active', NULL, NULL, NULL,
                   :created_at, :updated_at, NULL, NULL, NULL)`,
     args: {
       id,
       caller_id: input.caller_id,
       caller_location: input.caller_location,
+      caller_address: input.caller_address,
       created_at: now,
       updated_at: now,
     },
@@ -332,6 +333,7 @@ function rowToIncident(row: Record<string, unknown>): Incident {
     id: row["id"] as string,
     caller_id: row["caller_id"] as string,
     caller_location: row["caller_location"] as string,
+    caller_address: (row["caller_address"] as string) ?? "",
     status: row["status"] as Incident["status"],
     type: (row["type"] as Incident["type"]) ?? null,
     priority: (row["priority"] as Incident["priority"]) ?? null,

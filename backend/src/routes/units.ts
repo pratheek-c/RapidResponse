@@ -2,6 +2,7 @@
  * Units REST routes.
  *
  * GET  /units          List units (optional ?status=available&type=ems)
+ * GET  /units/mock     List mock units from dispatchers.json, with distance from ?lat,lng
  * GET  /units/:id      Get a single unit
  * POST /units          Create a unit (admin/seed use)
  * PATCH /units/:id     Update unit status
@@ -15,6 +16,84 @@ import {
   getDb,
 } from "../db/libsql.ts";
 import type { UnitStatus, UnitType } from "../types/index.ts";
+import { haversine, etaMinutes } from "../utils/haversine.ts";
+
+// ---------------------------------------------------------------------------
+// Mock data types (from backend/data/mock/dispatchers.json)
+// ---------------------------------------------------------------------------
+
+type MockCrewMember = {
+  name: string;
+  role: string;
+};
+
+type MockVehicle = {
+  make: string;
+  model: string;
+  year: number;
+  license: string;
+  vin: string;
+};
+
+type MockCoords = {
+  lat: number;
+  lng: number;
+};
+
+type MockUnit = {
+  unit_code: string;
+  type: UnitType;
+  status: UnitStatus;
+  zone: string;
+  station: string;
+  station_coords: MockCoords;
+  current_coords: MockCoords;
+  current_incident_id: string | null;
+  crew: MockCrewMember[];
+  vehicle: MockVehicle;
+  equipment: string[];
+};
+
+type MockDispatchersData = {
+  units: MockUnit[];
+};
+
+export type MockUnitWithDistance = MockUnit & {
+  distance_km: number;
+  eta_minutes: number;
+};
+
+// Cache the parsed mock data to avoid re-reading on every request
+let mockDataCache: MockDispatchersData | null = null;
+
+async function getMockData(): Promise<MockDispatchersData> {
+  if (mockDataCache) return mockDataCache;
+  const file = Bun.file(new URL("../../data/mock/dispatchers.json", import.meta.url));
+  const raw = (await file.json()) as MockDispatchersData;
+  mockDataCache = raw;
+  return raw;
+}
+
+/**
+ * Return mock units enriched with distance and ETA from a given coordinate.
+ * Exported for use by callHandler.ts to inject context into the Nova Sonic prompt.
+ */
+export async function getMockUnitsWithDistance(
+  lat: number,
+  lng: number
+): Promise<MockUnitWithDistance[]> {
+  const data = await getMockData();
+  const units: MockUnitWithDistance[] = data.units.map((u) => {
+    const dist = haversine(lat, lng, u.current_coords.lat, u.current_coords.lng);
+    return {
+      ...u,
+      distance_km: Math.round(dist * 100) / 100,
+      eta_minutes: etaMinutes(dist),
+    };
+  });
+  units.sort((a, b) => a.distance_km - b.distance_km);
+  return units;
+}
 
 export async function handleUnits(req: Request): Promise<Response> {
   const url = new URL(req.url);
@@ -33,7 +112,6 @@ export async function handleUnits(req: Request): Promise<Response> {
         return jsonError(err, 500);
       }
     }
-
     if (req.method === "POST") {
       let body: unknown;
       try {
@@ -70,6 +148,30 @@ export async function handleUnits(req: Request): Promise<Response> {
 
   const id = pathParts[1];
   if (!id) return badRequest("Missing unit ID");
+
+  // GET /units/mock?lat=X&lng=Y
+  if (id === "mock" && req.method === "GET") {
+    const latStr = url.searchParams.get("lat");
+    const lngStr = url.searchParams.get("lng");
+    const lat = latStr !== null ? parseFloat(latStr) : null;
+    const lng = lngStr !== null ? parseFloat(lngStr) : null;
+
+    try {
+      if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng)) {
+        const units = await getMockUnitsWithDistance(lat, lng);
+        return json({ ok: true, data: units });
+      } else {
+        // No coords — return all units sorted by unit_code, distance = 0
+        const data = await getMockData();
+        const units: MockUnitWithDistance[] = data.units
+          .map((u) => ({ ...u, distance_km: 0, eta_minutes: 0 }))
+          .sort((a, b) => a.unit_code.localeCompare(b.unit_code));
+        return json({ ok: true, data: units });
+      }
+    } catch (err) {
+      return jsonError(err, 500);
+    }
+  }
 
   if (req.method === "GET") {
     try {
