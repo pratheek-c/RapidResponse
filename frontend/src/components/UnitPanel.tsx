@@ -1,7 +1,6 @@
 /**
  * UnitPanel — rich unit cards showing status, zone, distance from incident,
- * crew, vehicle, and equipment. Fetches from /units/mock when incident coords
- * are available, falls back to the basic /units list otherwise.
+ * crew, vehicle, and equipment. White/black theme with semantic status dots.
  */
 import { useState, useEffect, useCallback } from "react";
 import type { Unit } from "@/types";
@@ -43,22 +42,29 @@ type MockUnit = {
 };
 
 // ---------------------------------------------------------------------------
-// Status styling
+// Semantic status dot colours (kept intentionally coloured for quick scanning)
 // ---------------------------------------------------------------------------
 
-const STATUS_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  available:  { bg: "#0a1f0f", border: "#16a34a", text: "#22c55e" },
-  dispatched: { bg: "#1a0f00", border: "#c2410c", text: "#f97316" },
-  on_scene:   { bg: "#0d1a2e", border: "#1d4ed8", text: "#3b82f6" },
-  returning:  { bg: "#1a0d2e", border: "#7c3aed", text: "#a78bfa" },
+const STATUS_DOT: Record<string, string> = {
+  available:  "#16a34a",
+  dispatched: "#f97316",
+  on_scene:   "#3b82f6",
+  returning:  "#a78bfa",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  available:  "AVAILABLE",
+  dispatched: "DISPATCHED",
+  on_scene:   "ON SCENE",
+  returning:  "RETURNING",
 };
 
 const TYPE_ICONS: Record<string, string> = {
-  ems:     "🚑",
-  fire:    "🚒",
-  police:  "🚔",
-  hazmat:  "☣",
-  rescue:  "🛟",
+  ems:     "EMS",
+  fire:    "FIRE",
+  police:  "PD",
+  hazmat:  "HZM",
+  rescue:  "SAR",
 };
 
 // ---------------------------------------------------------------------------
@@ -95,7 +101,6 @@ export function UnitPanel({ units, incidentLocation }: Props) {
 
   useEffect(() => {
     if (!incidentLocation) {
-      // No incident selected — fetch without coords to get all mock units
       fetch(`${API_BASE}/units/mock`)
         .then((r) => r.json())
         .then((j: { ok: boolean; data: MockUnit[] }) => {
@@ -110,7 +115,6 @@ export function UnitPanel({ units, incidentLocation }: Props) {
     }
   }, [incidentLocation, fetchMock]);
 
-  // Use mock data if available, else fall back to basic DB units
   const displayUnits = mockUnits.length > 0 ? mockUnits : units.map(dbUnitToMock);
 
   const toggleExpand = (code: string) =>
@@ -119,13 +123,13 @@ export function UnitPanel({ units, incidentLocation }: Props) {
   return (
     <div>
       {loadingMock && (
-        <div style={{ fontSize: 11, color: "#475569", marginBottom: 8 }}>
+        <div style={{ fontSize: 11, color: "#aaa", marginBottom: 8 }}>
           Calculating distances…
         </div>
       )}
 
       {displayUnits.map((u) => {
-        const style = STATUS_COLORS[u.status] ?? STATUS_COLORS.available;
+        const dotColor = STATUS_DOT[u.status] ?? "#aaa";
         const isExpanded = expanded === u.unit_code;
 
         return (
@@ -133,83 +137,138 @@ export function UnitPanel({ units, incidentLocation }: Props) {
             key={u.unit_code}
             onClick={() => toggleExpand(u.unit_code)}
             style={{
-              background: style.bg,
-              border: `1px solid ${style.border}`,
-              borderRadius: 10,
-              padding: "10px 12px",
-              marginBottom: 8,
+              background: "#fff",
+              border: "1px solid #e0e0e0",
+              borderRadius: 6,
+              padding: "9px 11px",
+              marginBottom: 7,
               cursor: "pointer",
-              transition: "border-color 0.15s",
+              transition: "border-color 0.15s, box-shadow 0.15s",
+              boxShadow: isExpanded ? "0 1px 4px rgba(0,0,0,0.08)" : "none",
             }}
           >
             {/* Unit header row */}
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 16 }}>{TYPE_ICONS[u.type] ?? "🚨"}</span>
+              {/* Status dot */}
+              <div
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: dotColor,
+                  flexShrink: 0,
+                }}
+              />
 
+              {/* Type chip */}
+              <span
+                style={{
+                  fontSize: 9,
+                  fontWeight: 700,
+                  color: "#555",
+                  background: "#f0f0f0",
+                  border: "1px solid #ddd",
+                  borderRadius: 3,
+                  padding: "1px 5px",
+                  fontFamily: "monospace",
+                  letterSpacing: 0.5,
+                  flexShrink: 0,
+                }}
+              >
+                {TYPE_ICONS[u.type] ?? u.type.toUpperCase()}
+              </span>
+
+              {/* Unit code + status */}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontWeight: 700, fontSize: 13, color: "#f1f5f9" }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                  <span
+                    style={{
+                      fontWeight: 700,
+                      fontSize: 12,
+                      color: "#000",
+                      fontFamily: "monospace",
+                    }}
+                  >
                     {u.unit_code}
                   </span>
                   <span
                     style={{
                       fontSize: 10,
-                      fontWeight: 700,
-                      color: style.text,
-                      textTransform: "uppercase",
-                      letterSpacing: 0.5,
+                      fontWeight: 600,
+                      color: dotColor,
+                      letterSpacing: 0.3,
                     }}
                   >
-                    {u.status.replace("_", " ")}
+                    {STATUS_LABEL[u.status] ?? u.status.toUpperCase()}
                   </span>
                 </div>
-                <div style={{ fontSize: 11, color: "#64748b", marginTop: 1 }}>
+                <div style={{ fontSize: 10, color: "#aaa", marginTop: 1 }}>
                   {u.zone}
                   {u.crew.length > 0 && (
-                    <span style={{ marginLeft: 6 }}>· {u.crew.length} crew</span>
+                    <span style={{ marginLeft: 6 }}>{u.crew.length} crew</span>
                   )}
                 </div>
               </div>
 
-              {/* Distance badge */}
+              {/* Distance / ETA */}
               {incidentLocation && u.distance_km > 0 && (
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#e2e8f0" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#000" }}>
                     {u.distance_km.toFixed(1)} km
                   </div>
-                  <div style={{ fontSize: 10, color: "#64748b" }}>
+                  <div style={{ fontSize: 10, color: "#888" }}>
                     ~{u.eta_minutes} min
                   </div>
                 </div>
               )}
 
-              <span style={{ fontSize: 10, color: "#334155", flexShrink: 0 }}>
+              <span style={{ fontSize: 10, color: "#ccc", flexShrink: 0 }}>
                 {isExpanded ? "▲" : "▼"}
               </span>
             </div>
 
             {/* Expanded detail */}
             {isExpanded && (
-              <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${style.border}` }}>
+              <div
+                style={{
+                  marginTop: 10,
+                  paddingTop: 10,
+                  borderTop: "1px solid #eeeeee",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+              >
                 {/* Vehicle */}
-                {u.vehicle && (
-                  <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 6 }}>
-                    <span style={{ color: "#64748b" }}>Vehicle: </span>
+                {u.vehicle && u.vehicle.make !== "—" && (
+                  <div style={{ fontSize: 11, color: "#555" }}>
+                    <span style={{ color: "#aaa", marginRight: 4 }}>Vehicle:</span>
                     {u.vehicle.year} {u.vehicle.make} {u.vehicle.model}
-                    <span style={{ marginLeft: 6, color: "#475569" }}>({u.vehicle.license})</span>
+                    <span style={{ marginLeft: 6, color: "#bbb", fontFamily: "monospace" }}>
+                      {u.vehicle.license}
+                    </span>
                   </div>
                 )}
 
                 {/* Crew */}
                 {u.crew.length > 0 && (
-                  <div style={{ marginBottom: 6 }}>
-                    <div style={{ fontSize: 10, color: "#475569", marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        color: "#aaa",
+                        textTransform: "uppercase",
+                        letterSpacing: 1,
+                        marginBottom: 3,
+                      }}
+                    >
                       Crew
                     </div>
                     {u.crew.map((c, i) => (
-                      <div key={i} style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.6 }}>
+                      <div key={i} style={{ fontSize: 11, color: "#333", lineHeight: 1.6 }}>
                         {c.name}
-                        <span style={{ color: "#475569" }}> — {c.role}</span>
+                        <span style={{ color: "#aaa", marginLeft: 4 }}>— {c.role}</span>
                       </div>
                     ))}
                   </div>
@@ -218,7 +277,16 @@ export function UnitPanel({ units, incidentLocation }: Props) {
                 {/* Equipment */}
                 {u.equipment.length > 0 && (
                   <div>
-                    <div style={{ fontSize: 10, color: "#475569", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    <div
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        color: "#aaa",
+                        textTransform: "uppercase",
+                        letterSpacing: 1,
+                        marginBottom: 4,
+                      }}
+                    >
                       Equipment
                     </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -227,11 +295,11 @@ export function UnitPanel({ units, incidentLocation }: Props) {
                           key={eq}
                           style={{
                             fontSize: 10,
-                            background: "#111827",
-                            border: "1px solid #1e2433",
-                            borderRadius: 4,
+                            background: "#f5f5f5",
+                            border: "1px solid #e0e0e0",
+                            borderRadius: 3,
                             padding: "2px 6px",
-                            color: "#64748b",
+                            color: "#555",
                           }}
                         >
                           {eq}
@@ -243,7 +311,7 @@ export function UnitPanel({ units, incidentLocation }: Props) {
 
                 {/* Current incident */}
                 {u.current_incident_id && (
-                  <div style={{ marginTop: 6, fontSize: 11, color: style.text }}>
+                  <div style={{ fontSize: 11, color: "#555", fontFamily: "monospace" }}>
                     Assigned: #{u.current_incident_id.slice(0, 8)}
                   </div>
                 )}
@@ -254,7 +322,7 @@ export function UnitPanel({ units, incidentLocation }: Props) {
       })}
 
       {displayUnits.length === 0 && (
-        <div style={{ fontSize: 12, color: "#334155", textAlign: "center", paddingTop: 20 }}>
+        <div style={{ fontSize: 12, color: "#ccc", textAlign: "center", paddingTop: 20 }}>
           No units available
         </div>
       )}

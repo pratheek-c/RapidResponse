@@ -37,7 +37,13 @@ export function useIncidents() {
     const handleIncidentEvent = (ev: MessageEvent<string>) => {
       try {
         const event = JSON.parse(ev.data) as SseEvent;
-        const updated = event.payload as Incident;
+        // incident_classified payload is { type, priority, incident: Incident }
+        // all other incident events have the Incident as the payload directly
+        const payload = event.payload as Record<string, unknown>;
+        const updated: Incident =
+          event.type === "incident_classified" && payload["incident"]
+            ? (payload["incident"] as Incident)
+            : (payload as unknown as Incident);
         setIncidents((prev) => {
           const idx = prev.findIndex((i) => i.id === updated.id);
           if (idx === -1) return [updated, ...prev];

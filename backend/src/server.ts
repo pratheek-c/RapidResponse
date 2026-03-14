@@ -21,6 +21,7 @@ import { handleDispatch } from "./routes/dispatch.ts";
 import { handleProtocols } from "./routes/protocols.ts";
 import { handleRecordings } from "./routes/recordings.ts";
 import { handleReport } from "./routes/reportRoute.ts";
+import { handleMock } from "./routes/mockRoute.ts";
 import {
   onMessage,
   onClose,
@@ -112,6 +113,11 @@ async function router(req: Request): Promise<Response> {
   // Report
   if (path.startsWith("/report")) {
     return withCors(await handleReport(req));
+  }
+
+  // Mock data
+  if (path.startsWith("/mock")) {
+    return withCors(await handleMock(req));
   }
 
   return new Response(JSON.stringify({ ok: false, error: "Not found" }), {

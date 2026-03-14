@@ -7,6 +7,8 @@
  */
 
 import { getIncident, listIncidents, updateIncident } from "../services/incidentService.ts";
+import { dbGetTranscription } from "../db/libsql.ts";
+import { getDb } from "../db/libsql.ts";
 import type { UpdateIncidentInput } from "../types/index.ts";
 
 export async function handleIncidents(req: Request): Promise<Response> {
@@ -33,6 +35,17 @@ export async function handleIncidents(req: Request): Promise<Response> {
 
   const id = pathParts[1];
   if (!id) return badRequest("Missing incident ID");
+
+  // /incidents/:id/transcript
+  if (pathParts[2] === "transcript") {
+    if (req.method !== "GET") return notAllowed();
+    try {
+      const turns = await dbGetTranscription(getDb(), id);
+      return json({ ok: true, data: turns });
+    } catch (err) {
+      return jsonError(err, 500);
+    }
+  }
 
   if (req.method === "GET") {
     try {
