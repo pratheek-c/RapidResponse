@@ -7,6 +7,8 @@
  *  3. Nova Sonic callbacks → send audio responses / transcript updates back to browser
  *  4. Handles barge-in (__FLUSH__ sentinel from Nova Sonic)
  *  5. call_end or WS close → close Nova Sonic session → export transcript → update incident
+ *  6. Report Agent (Nova Lite) runs every 30s + on key events, sends report_update WS messages
+ *  7. Dispatcher assigned from mock data by zone matching; surfaced in report
  *
  * Message protocol:
  *   Browser → Server: WsClientMessage (JSON)
@@ -19,21 +21,37 @@ import type {
   WsClientMessage,
   WsCallStartMessage,
   WsServerMessage,
+  TranscriptionTurn,
 } from "../types/index.ts";
 import { createIncident, updateIncident } from "../services/incidentService.ts";
 import { saveAgentTurn, saveCallerTurn, exportTranscript } from "../services/transcriptionService.ts";
 import { uploadTranscript, uploadAudioChunk } from "../services/storageService.ts";
 import { startNovaSession, type NovaSession, type AvailableUnitSummary } from "../agents/novaAgent.ts";
+import { generateReport, assignDispatcher, type MockData } from "../agents/reportAgent.ts";
+import { cacheReport, evictReport } from "../routes/reportRoute.ts";
+import type { MockUnitWithDistance } from "../routes/units.ts";
 
 // ---------------------------------------------------------------------------
 // Per-connection state
 // ---------------------------------------------------------------------------
 
-type CallState = {
+export type CallState = {
   incident_id: string;
   session: NovaSession;
   callStartMs: number;
   audioFlushQueued: boolean;
+  // Report agent state
+  transcript: TranscriptionTurn[];
+  dispatchedUnits: MockUnitWithDistance[];
+  assignedDispatcherId: string | null;
+  mockData: MockData | null;
+  callerLocation: string;
+  callerAddress: string;
+  reportIntervalId: ReturnType<typeof setInterval> | null;
+  transcriptTurnsSinceLastReport: number;
+  incidentType: import("../types/index.ts").IncidentType | null;
+  incidentPriority: import("../types/index.ts").IncidentPriority | null;
+  incidentStatus: import("../types/index.ts").IncidentStatus;
 };
 
 // ---------------------------------------------------------------------------
@@ -139,16 +157,18 @@ async function handleCallStart(
 
   const callStartMs = Date.now();
 
-  // Fetch nearby units from mock data to inject into agent's system prompt
+  // Load mock data for report agent + dispatcher assignment
+  let mockData: MockData | null = null;
   let available_units: AvailableUnitSummary[] = [];
+  let mockUnitsWithDistance: MockUnitWithDistance[] = [];
+
   try {
-    // Parse "lat, lng" from msg.location if present
     const coordParts = msg.location.split(",").map((s) => parseFloat(s.trim()));
     if (coordParts.length === 2 && !isNaN(coordParts[0]) && !isNaN(coordParts[1])) {
       const [lat, lng] = coordParts;
       const { getMockUnitsWithDistance } = await import("../routes/units.ts");
-      const mockUnits = await getMockUnitsWithDistance(lat, lng);
-      available_units = mockUnits.map((u) => ({
+      mockUnitsWithDistance = await getMockUnitsWithDistance(lat, lng);
+      available_units = mockUnitsWithDistance.map((u) => ({
         unit_code: u.unit_code,
         type: u.type,
         status: u.status,
@@ -158,8 +178,20 @@ async function handleCallStart(
         crew_count: u.crew.length,
       }));
     }
+
+    // Load full mock data for report agent
+    const file = Bun.file(new URL("../../data/mock/dispatchers.json", import.meta.url));
+    const raw = (await file.json()) as MockData;
+    mockData = raw;
   } catch {
-    // non-fatal — proceed without unit context
+    // non-fatal — proceed without mock data
+  }
+
+  // Assign dispatcher from mock data
+  let assignedDispatcherId: string | null = null;
+  if (mockData) {
+    const dispatcher = assignDispatcher(msg.location, mockData);
+    assignedDispatcherId = dispatcher?.id ?? null;
   }
 
   // Open Nova Sonic session
@@ -174,8 +206,6 @@ async function handleCallStart(
       callbacks: {
         onAudioOutput(base64Pcm: string) {
           if (base64Pcm === "__FLUSH__") {
-            // Barge-in: signal caller to discard buffered audio
-            // We send an empty audio_response to signal flush
             return;
           }
           sendMsg(ws, { type: "audio_response", data: base64Pcm });
@@ -183,6 +213,7 @@ async function handleCallStart(
 
         onTranscript(role: "caller" | "agent", text: string) {
           const elapsed = Date.now() - callStartMs;
+
           // Save to DB (fire-and-forget — don't block audio pipeline)
           if (role === "agent") {
             saveAgentTurn(incident_id, text, elapsed).catch((err: unknown) => {
@@ -194,15 +225,37 @@ async function handleCallStart(
             });
           }
           sendMsg(ws, { type: "transcript_update", role, text });
+
+          // Accumulate transcript in call state for report agent
+          if (state.current) {
+            state.current.transcript.push({
+              id: crypto.randomUUID(),
+              incident_id,
+              role,
+              text,
+              timestamp_ms: elapsed,
+              created_at: new Date().toISOString(),
+            });
+            state.current.transcriptTurnsSinceLastReport += 1;
+
+            // Trigger report after every 5 new transcript turns
+            if (state.current.transcriptTurnsSinceLastReport >= 5) {
+              state.current.transcriptTurnsSinceLastReport = 0;
+              triggerReportUpdate(ws, state.current).catch((err: unknown) => {
+                console.error("[report] transcript-triggered report failed:", err);
+              });
+            }
+          }
         },
 
         onEnd(reason: string) {
-          // Session ended — clean up
+          if (state.current) {
+            clearReportInterval(state.current);
+          }
           finalizeCall(ws, incident_id, state).catch((err: unknown) => {
             console.error("[call] finalization failed:", err);
           });
           if (reason === "session_renewal") {
-            // TODO: implement session renewal for calls >7m30s
             console.warn("[nova] session renewal needed for incident:", incident_id);
           }
         },
@@ -210,6 +263,9 @@ async function handleCallStart(
         onError(err: Error) {
           console.error("[nova] session error:", err.message);
           sendMsg(ws, { type: "error", message: `AI session error: ${err.message}` });
+          if (state.current) {
+            clearReportInterval(state.current);
+          }
           finalizeCall(ws, incident_id, state).catch((e: unknown) => {
             console.error("[call] finalization after error failed:", e);
           });
@@ -224,7 +280,36 @@ async function handleCallStart(
     return;
   }
 
-  state.current = { incident_id, session, callStartMs, audioFlushQueued: false };
+  state.current = {
+    incident_id,
+    session,
+    callStartMs,
+    audioFlushQueued: false,
+    transcript: [],
+    dispatchedUnits: [],
+    assignedDispatcherId,
+    mockData,
+    callerLocation: msg.location,
+    callerAddress: msg.address ?? msg.location,
+    reportIntervalId: null,
+    transcriptTurnsSinceLastReport: 0,
+    incidentType: null,
+    incidentPriority: null,
+    incidentStatus: "active",
+  };
+
+  // Start 30-second report interval
+  state.current.reportIntervalId = setInterval(() => {
+    if (!state.current) return;
+    triggerReportUpdate(ws, state.current).catch((err: unknown) => {
+      console.error("[report] interval report failed:", err);
+    });
+  }, 30_000);
+
+  // Fire initial report immediately (gives UI dispatcher card from first render)
+  triggerReportUpdate(ws, state.current).catch((err: unknown) => {
+    console.error("[report] initial report failed:", err);
+  });
 }
 
 async function handleCallEnd(
@@ -233,6 +318,7 @@ async function handleCallEnd(
 ): Promise<void> {
   if (!state.current) return;
   const { incident_id, session } = state.current;
+  clearReportInterval(state.current);
   state.current = null;
 
   try {
@@ -249,6 +335,9 @@ async function finalizeCall(
   incident_id: string,
   state: { current: CallState | null }
 ): Promise<void> {
+  if (state.current) {
+    clearReportInterval(state.current);
+  }
   state.current = null;
   await finalizeCallById(ws, incident_id);
 }
@@ -270,8 +359,62 @@ async function finalizeCallById(
     sendMsg(ws, { type: "call_ended", incident_id });
   } catch (err) {
     console.error("[call] finalize error:", err);
-    // Still notify client the call ended
     sendMsg(ws, { type: "call_ended", incident_id });
+  }
+
+  // Clean up cached report after a delay (allow HTTP polling to finish)
+  setTimeout(() => evictReport(incident_id), 60_000);
+}
+
+// ---------------------------------------------------------------------------
+// Report agent integration
+// ---------------------------------------------------------------------------
+
+async function triggerReportUpdate(
+  ws: BunServerWebSocket,
+  callState: CallState
+): Promise<void> {
+  if (!callState.mockData) return;
+
+  try {
+    const report = await generateReport({
+      incident_id: callState.incident_id,
+      caller_location: callState.callerLocation,
+      caller_address: callState.callerAddress,
+      incident_type: callState.incidentType,
+      priority: callState.incidentPriority,
+      status: callState.incidentStatus,
+      call_start_ms: callState.callStartMs,
+      transcript: callState.transcript,
+      dispatched_units: callState.dispatchedUnits,
+      assigned_dispatcher_id: callState.assignedDispatcherId,
+      mock_data: callState.mockData,
+    });
+
+    // Cache report for HTTP polling
+    cacheReport(report);
+
+    // Push to browser
+    sendMsg(ws, { type: "report_update", report });
+
+    // If unit is approaching (ETA <= 3 min), send additional approaching message
+    if (report.approaching_unit) {
+      sendMsg(ws, {
+        type: "dispatcher_approaching",
+        unit_code: report.approaching_unit.unit_code,
+        eta_minutes: report.approaching_unit.eta_minutes,
+        crew: report.approaching_unit.crew,
+      });
+    }
+  } catch (err) {
+    console.error("[report] generateReport failed:", err instanceof Error ? err.message : String(err));
+  }
+}
+
+function clearReportInterval(callState: CallState): void {
+  if (callState.reportIntervalId !== null) {
+    clearInterval(callState.reportIntervalId);
+    callState.reportIntervalId = null;
   }
 }
 

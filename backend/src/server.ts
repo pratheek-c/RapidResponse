@@ -20,6 +20,7 @@ import { handleUnits } from "./routes/units.ts";
 import { handleDispatch } from "./routes/dispatch.ts";
 import { handleProtocols } from "./routes/protocols.ts";
 import { handleRecordings } from "./routes/recordings.ts";
+import { handleReport } from "./routes/reportRoute.ts";
 import {
   onMessage,
   onClose,
@@ -106,6 +107,11 @@ async function router(req: Request): Promise<Response> {
   // Recordings
   if (path.startsWith("/recordings")) {
     return withCors(await handleRecordings(req));
+  }
+
+  // Report
+  if (path.startsWith("/report")) {
+    return withCors(await handleReport(req));
   }
 
   return new Response(JSON.stringify({ ok: false, error: "Not found" }), {

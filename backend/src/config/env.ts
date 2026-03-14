@@ -24,6 +24,7 @@ export type Env = {
 
   // Bedrock model IDs
   BEDROCK_NOVA_SONIC_MODEL_ID: string;
+  BEDROCK_NOVA_LITE_MODEL_ID: string;
   BEDROCK_TITAN_EMBED_MODEL_ID: string;
 
   // libSQL
@@ -53,6 +54,7 @@ function loadEnv(): Env {
     AWS_SECRET_ACCESS_KEY: requireEnv("AWS_SECRET_ACCESS_KEY"),
 
     BEDROCK_NOVA_SONIC_MODEL_ID: requireEnv("BEDROCK_NOVA_SONIC_MODEL_ID"),
+    BEDROCK_NOVA_LITE_MODEL_ID: optionalEnv("BEDROCK_NOVA_LITE_MODEL_ID", "amazon.nova-lite-v1:0"),
     BEDROCK_TITAN_EMBED_MODEL_ID: requireEnv("BEDROCK_TITAN_EMBED_MODEL_ID"),
 
     LIBSQL_URL: optionalEnv("LIBSQL_URL", "file:./data/rapidresponse.db"),

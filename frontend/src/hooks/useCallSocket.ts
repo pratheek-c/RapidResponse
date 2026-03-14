@@ -1,6 +1,7 @@
 /**
  * useCallSocket — manages the WebSocket connection for the CallerView.
  * Handles mic audio capture, PCM encoding, and playback of Nova Sonic audio.
+ * Also handles report_update and dispatcher_approaching messages from the Report Agent.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
@@ -8,9 +9,12 @@ import type {
   WsServerMessage,
   WsTranscriptUpdateMessage,
   WsIncidentClassifiedMessage,
+  WsReportUpdateMessage,
+  WsDispatcherApproachingMessage,
   TranscriptionRole,
   IncidentType,
   IncidentPriority,
+  IncidentReport,
 } from "@/types";
 
 const WS_BASE = import.meta.env.VITE_WS_BASE ?? `ws://${window.location.host}`;
@@ -32,6 +36,12 @@ export type ClassificationResult = {
   priority: IncidentPriority;
 };
 
+export type ApproachingUnit = {
+  unit_code: string;
+  eta_minutes: number;
+  crew: { name: string; role: string }[];
+};
+
 export function useCallSocket() {
   const [status, setStatus] = useState<CallStatus>("idle");
   const [incidentId, setIncidentId] = useState<string | null>(null);
@@ -39,6 +49,8 @@ export function useCallSocket() {
   const [classification, setClassification] =
     useState<ClassificationResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [report, setReport] = useState<IncidentReport | null>(null);
+  const [approachingUnit, setApproachingUnit] = useState<ApproachingUnit | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -114,6 +126,8 @@ export function useCallSocket() {
       setTranscript([]);
       setClassification(null);
       setErrorMessage(null);
+      setReport(null);
+      setApproachingUnit(null);
 
       let stream: MediaStream;
       try {
@@ -177,6 +191,20 @@ export function useCallSocket() {
             });
             break;
           }
+          case "report_update": {
+            const r = msg as WsReportUpdateMessage;
+            setReport(r.report);
+            break;
+          }
+          case "dispatcher_approaching": {
+            const a = msg as WsDispatcherApproachingMessage;
+            setApproachingUnit({
+              unit_code: a.unit_code,
+              eta_minutes: a.eta_minutes,
+              crew: a.crew,
+            });
+            break;
+          }
           case "error":
             setErrorMessage(msg.message);
             break;
@@ -227,6 +255,8 @@ export function useCallSocket() {
     transcript,
     classification,
     errorMessage,
+    report,
+    approachingUnit,
     startCall,
     endCall,
     flushAudioQueue,

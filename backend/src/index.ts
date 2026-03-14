@@ -34,7 +34,7 @@ async function runMigrations(): Promise<void> {
       )
     );
 
-    const files = ["001_initial.sql", "002_add_indexes.sql"];
+    const files = ["001_initial.sql", "002_add_indexes.sql", "003_add_caller_address.sql"];
 
     for (const file of files) {
       const version = file.replace(".sql", "");
