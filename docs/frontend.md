@@ -9,20 +9,21 @@ The frontend is a React 18 + TypeScript + Vite single-page application served fr
 - [Development Setup](#development-setup)
 - [Project Structure](#project-structure)
 - [Environment Variables](#environment-variables)
+- [Routing](#routing)
 - [Pages](#pages)
+  - [CallerView (`/`)](#callerview-)
   - [DispatcherDashboard (`/dashboard`)](#dispatcherdashboard-dashboard)
-  - [CallerView (`/call`)](#callerview-call)
 - [Hooks](#hooks)
+  - [useCallerInfo](#usecallerinfo)
+  - [useCallSocket](#usecallsocket)
   - [useIncidents](#useincidents)
   - [useUnits](#useunits)
-  - [useCallSocket](#usecallsocket)
 - [Components](#components)
   - [Badges](#badges)
   - [IncidentList](#incidentlist)
   - [IncidentDetail](#incidentdetail)
   - [UnitPanel](#unitpanel)
 - [Types](#types)
-- [Routing](#routing)
 - [API Proxy (Vite)](#api-proxy-vite)
 - [Building for Production](#building-for-production)
 
@@ -63,17 +64,18 @@ frontend/src/
 ├── types/
 │   └── index.ts          # All shared types (mirror of backend/src/types/index.ts)
 ├── hooks/
+│   ├── useCallerInfo.ts  # GPS location, reverse geocode, persistent caller UUID
 │   ├── useIncidents.ts   # SSE + REST for live incident list
 │   ├── useUnits.ts       # REST poll for unit list
 │   └── useCallSocket.ts  # WebSocket + mic audio + Nova Sonic audio playback
 ├── components/
 │   ├── Badges.tsx        # PriorityBadge, StatusBadge, TypeChip
-│   ├── IncidentList.tsx  # Sidebar list of incidents
-│   ├── IncidentDetail.tsx# Main panel: detail, dispatch, transcript
-│   └── UnitPanel.tsx     # Right sidebar: unit grid by type
+│   ├── IncidentList.tsx  # Sidebar list of incidents with search + filter tabs
+│   ├── IncidentDetail.tsx# Main panel: AI Report tab + Transcript tab
+│   └── UnitPanel.tsx     # Right sidebar: unit cards with distance + ETA
 └── pages/
-    ├── DispatcherDashboard.tsx
-    └── CallerView.tsx
+    ├── CallerView.tsx
+    └── DispatcherDashboard.tsx
 ```
 
 ---
@@ -91,78 +93,46 @@ In production, set `VITE_API_BASE=https://api.yourapp.com` and `VITE_WS_BASE=wss
 
 ---
 
-## Pages
+## Routing
 
-### DispatcherDashboard (`/dashboard`)
+Routes are defined in `App.tsx`:
 
-`frontend/src/pages/DispatcherDashboard.tsx`
+| Path | Component | Description |
+|---|---|---|
+| `/` | `CallerView` | 911 caller interface (auto-arms on mount) |
+| `/dashboard` | `DispatcherDashboard` | Operator dispatch interface |
+| `*` | Redirect to `/` | 404 fallback |
 
-The main operator interface. Three-column layout:
-
-```
-┌──────────────────┬──────────────────────────────┬────────────────┐
-│  INCIDENTS       │  Incident Detail              │  UNITS         │
-│  (sidebar)       │  (main content)               │  (sidebar)     │
-│                  │                               │                │
-│  Live list from  │  Selected incident info:      │  Unit grid     │
-│  SSE /events     │  • status / priority / type   │  grouped by    │
-│                  │  • location / caller ID        │  unit type     │
-│  Click to select │  • summary                    │  with status   │
-│                  │  • dispatch panel             │  color coding  │
-│                  │  • dispatched units list       │                │
-│                  │  • transcript                 │                │
-└──────────────────┴──────────────────────────────┴────────────────┘
-```
-
-**Header bar:**
-- "RapidResponse.ai" branding with live SSE connection status dot
-- "Simulate 911 Call" button links to `/call`
-
-**Incident list sidebar:**
-- Powered by `useIncidents()` hook
-- Auto-updates in real time via SSE
-- Shows incident ID, location, priority badge, status badge, type chip, time
-- Click any incident to load its detail in the main panel
-
-**Incident detail panel:**
-- Shows all incident metadata
-- If `status === "active"`: dispatch panel with unit selector dropdown (filtered to available units)
-- Shows all dispatch records with arrival times
-- Shows full transcript with caller/agent bubbles
-
-**Unit panel sidebar:**
-- Powered by `useUnits()` hook (10-second poll)
-- Units grouped by type (ems, fire, police, hazmat, rescue)
-- Color-coded border by status:
-  - Green border: `available`
-  - Orange border: `dispatched`
-  - Blue border: `on_scene`
-  - Purple border: `returning`
-- Hover shows tooltip with full status and incident assignment
+> **Note:** There is no `/call` route. The caller interface lives at `/`.
 
 ---
 
-### CallerView (`/call`)
+## Pages
+
+### CallerView (`/`)
 
 `frontend/src/pages/CallerView.tsx`
 
-A call simulation interface. Intended for testing the AI voice agent without a real phone system.
+The browser-based 911 caller interface. Designed for use by a caller (or for simulation). Dark theme (`#080a0f` background).
 
-**Before call:**
-- Caller ID input (defaults to `CALLER-ANON`)
-- Location input (defaults to `Unknown location`)
-- "Call 911" button
+**Auto-arms on mount** — as soon as `useCallerInfo` resolves a `callerId`, `startCall()` is invoked automatically. There is no manual "Call 911" button shown before the call starts.
 
-**During call:**
-- Pulsing green "CALL IN PROGRESS" indicator with incident ID
-- Real-time transcript bubbles (caller on left, AI agent on right)
-- Classification banner when Nova Sonic classifies the incident
-- "Hang Up" button to end the call cleanly
+**Voice state machine:**
 
-**After call:**
-- "Call ended." status
-- Full transcript remains visible
-- Form resets to allow simulating another call
+```
+arming → ready → listening → agent_speaking → ended / error
+```
+
+**What the caller sees during a call:**
+- Animated audio waveform indicating live voice activity
+- Live transcript bubbles (caller on left, AI agent on right)
+- `DispatcherCard` — shown when `report_update` is received with a `dispatcher_assigned`
+- `HelpBanner` — shown when a report is available; displays ETA countdown from `units_dispatched[0]`
+- `ApproachingAlert` — shown when a `dispatcher_approaching` WS message is received; large alert with unit code, ETA, and crew names
+- Collapsible `ReportPanel` — full AI-generated incident report (summary, recommended actions, units, timeline)
+
+**After call ends:**
+- "Call 911 Again" button reloads the page to restart
 
 **Audio flow:**
 1. `getUserMedia({ audio: true })` — requests mic permission
@@ -172,7 +142,137 @@ A call simulation interface. Intended for testing the AI voice agent without a r
 
 ---
 
+### DispatcherDashboard (`/dashboard`)
+
+`frontend/src/pages/DispatcherDashboard.tsx`
+
+The operator interface. White/black monochrome theme throughout. CSS grid layout:
+
+```
+gridTemplateRows:    "48px 44px 1fr"
+gridTemplateColumns: "280px 1fr 300px"
+```
+
+**Row 1 — Nav bar** (black `#000`):
+- "RapidResponse.ai" branding
+- "DISPATCHER" role label
+- Zone chips fetched from `GET /mock/dispatchers` (e.g. ZONE-A, ZONE-B…)
+- SSE connection status dot (green = connected)
+- "Simulate 911 Call" link → navigates to `/`
+
+**Row 2 — Stats bar** (4 metric tiles):
+- Active incidents (black background)
+- Dispatched incidents
+- Resolved incidents
+- Available units count
+
+**Row 3 — Three-column layout:**
+
+```
+┌──────────────────┬──────────────────────────────┬────────────────┐
+│  IncidentList    │  IncidentDetail / EmptyState  │  Dispatchers   │
+│  (280px)         │  (flex-grow)                  │  + UnitPanel   │
+│                  │                               │  (300px)       │
+│  Search input    │  Tabbed: AI Report |           │                │
+│  Filter tabs     │          Transcript            │  On-duty cards │
+│  Incident rows   │                               │  Off-duty cards│
+│                  │                               │  Unit cards    │
+└──────────────────┴──────────────────────────────┴────────────────┘
+```
+
+- **Left column:** `IncidentList` — live incident feed via SSE
+- **Center column:** `IncidentDetail` when an incident is selected; `EmptyState` otherwise
+- **Right column:** Dispatcher cards (on-duty/off-duty from `GET /mock/dispatchers`) followed by `UnitPanel`
+
+On mount, fetches `GET /mock/dispatchers` to populate zone chips and dispatcher cards.
+
+---
+
 ## Hooks
+
+### `useCallerInfo`
+
+`frontend/src/hooks/useCallerInfo.ts`
+
+Provides caller identity and GPS location data for `CallerView`. Called once on mount; does not require any arguments.
+
+```typescript
+const { callerId, coords, address, geoStatus, geoError, requestLocation } = useCallerInfo();
+```
+
+| Return value | Type | Description |
+|---|---|---|
+| `callerId` | `string` | Persistent UUID stored in `localStorage` under `rr_caller_id`. Generated once with `crypto.randomUUID()` and reused across page loads |
+| `coords` | `{ lat: number; lng: number } \| null` | GPS coordinates from `navigator.geolocation` |
+| `address` | `string` | Human-readable address from OpenStreetMap Nominatim reverse geocode (no API key required). Falls back to `"lat,lng"` string if reverse geocode fails |
+| `geoStatus` | `GeoStatus` | `"idle"` \| `"requesting"` \| `"granted"` \| `"denied"` \| `"unavailable"` \| `"error"` |
+| `geoError` | `string \| null` | Error message if geolocation failed |
+| `requestLocation` | `() => void` | Manually trigger geolocation (e.g. if initially denied then re-granted) |
+
+**Behavior:**
+- On mount: requests GPS via `navigator.geolocation.getCurrentPosition()`
+- When coords are available: calls OpenStreetMap Nominatim `reverse` API to get a human-readable address
+- `callerId` is read from `localStorage` on mount; if absent, a new UUID is generated and stored
+
+---
+
+### `useCallSocket`
+
+`frontend/src/hooks/useCallSocket.ts`
+
+Manages the full call lifecycle: microphone capture, WebSocket connection, Nova Sonic audio playback, and all inbound WS message handling.
+
+```typescript
+const {
+  status,
+  incidentId,
+  transcript,
+  classification,
+  errorMessage,
+  report,
+  approachingUnit,
+  startCall,
+  endCall,
+  flushAudioQueue,
+} = useCallSocket();
+```
+
+**State**
+
+| Value | Type | Description |
+|---|---|---|
+| `status` | `CallStatus` | `"idle"` \| `"connecting"` \| `"active"` \| `"ended"` \| `"error"` |
+| `incidentId` | `string \| null` | Incident UUID from `call_accepted` message |
+| `transcript` | `TranscriptLine[]` | Accumulated `{ role, text }` turns |
+| `classification` | `ClassificationResult \| null` | `{ incident_type, priority }` from `incident_classified` message |
+| `errorMessage` | `string \| null` | Latest error message |
+| `report` | `IncidentReport \| null` | Latest report from `report_update` message |
+| `approachingUnit` | `{ unit_code: string; eta_minutes: number; crew: { name: string; role: string }[] } \| null` | Payload from `dispatcher_approaching` message |
+
+**Methods**
+
+| Method | Signature | Description |
+|---|---|---|
+| `startCall` | `(callerId: string, location: string, address: string) => Promise<void>` | Request mic → open WebSocket → send `call_start` |
+| `endCall` | `() => void` | Send `call_end` → stop recording → close WebSocket |
+| `flushAudioQueue` | `() => void` | Discard buffered audio (called on barge-in) |
+
+**Audio playback details:**
+
+Incoming PCM (24kHz) is decoded and queued for sequential playback:
+
+```
+base64 string
+  → atob()
+  → Uint8Array
+  → DataView.getInt16() / 32768  (PCM16 → float32)
+  → AudioBuffer (24kHz, 1 channel)
+  → AudioContext.createBufferSource().start()
+```
+
+A simple queue ensures audio chunks play in order without gaps. On `__FLUSH__` sentinel (barge-in), `flushAudioQueue()` discards all pending buffers and resets the `playing` flag.
+
+---
 
 ### `useIncidents`
 
@@ -222,85 +322,54 @@ const { units, loading, refetch } = useUnits();
 
 ---
 
-### `useCallSocket`
-
-`frontend/src/hooks/useCallSocket.ts`
-
-Manages the full call lifecycle: microphone capture, WebSocket connection, Nova Sonic audio playback, and transcript accumulation.
-
-```typescript
-const {
-  status,
-  incidentId,
-  transcript,
-  classification,
-  errorMessage,
-  startCall,
-  endCall,
-  flushAudioQueue,
-} = useCallSocket();
-```
-
-**State**
-
-| Value | Type | Description |
-|---|---|---|
-| `status` | `CallStatus` | `"idle"`, `"connecting"`, `"active"`, `"ended"`, `"error"` |
-| `incidentId` | `string \| null` | Incident UUID from `call_accepted` message |
-| `transcript` | `TranscriptLine[]` | Accumulated `{ role, text }` turns |
-| `classification` | `ClassificationResult \| null` | `{ incident_type, priority }` from `incident_classified` message |
-| `errorMessage` | `string \| null` | Latest error message |
-
-**Methods**
-
-| Method | Description |
-|---|---|
-| `startCall(callerId, location)` | Request mic → open WebSocket → send `call_start` |
-| `endCall()` | Send `call_end` → stop recording → close WebSocket |
-| `flushAudioQueue()` | Discard buffered audio (called on barge-in) |
-
-**Audio playback details:**
-
-Incoming PCM (24kHz) is decoded and queued for sequential playback:
-
-```
-base64 string
-  → atob()
-  → Uint8Array
-  → DataView.getInt16() / 32768  (PCM16 → float32)
-  → AudioBuffer (24kHz, 1 channel)
-  → AudioContext.createBufferSource().start()
-```
-
-A simple queue ensures audio chunks play in order without gaps. On `__FLUSH__` (barge-in), `flushAudioQueue()` discards all pending buffers and resets the `playing` flag.
-
----
-
 ## Components
 
 ### Badges
 
 `frontend/src/components/Badges.tsx`
 
-Three display-only badge components used throughout the dashboard.
+Three display-only badge components used throughout the dashboard. All use a white/black monochrome color scheme — no colored priority or status pills.
 
 **`PriorityBadge`**
 ```tsx
 <PriorityBadge priority="P1" />
 ```
-Renders a colored pill: P1=red, P2=orange, P3=yellow, P4=gray.
+
+| Priority | Style |
+|---|---|
+| `P1` | Solid black background, white text |
+| `P2` | Dark grey `#333`, white text |
+| `P3` | Medium grey `#666`, white text |
+| `P4` | Light grey background, dark text |
 
 **`StatusBadge`**
 ```tsx
 <StatusBadge status="active" />
 ```
-Renders a colored pill: active=green, dispatched=blue, resolved=gray, cancelled=dark gray.
+
+| Status | Style |
+|---|---|
+| `active` | Black background, white text |
+| `dispatched` | Dark `#444`, white text |
+| `resolved` | Light grey, dark text |
+| `cancelled` | Light grey, dark text |
 
 **`TypeChip`**
 ```tsx
 <TypeChip type="fire" />
 ```
-Renders an emoji + label: fire🔥, medical🚑, police👮, traffic🚗, hazmat☣️, search_rescue🔍, other📋.
+
+Text-only monochrome labels — no emojis. Displays the incident type abbreviation:
+
+| Type | Label |
+|---|---|
+| `fire` | FIRE |
+| `medical` | MED |
+| `police` | PD |
+| `traffic` | MVA |
+| `hazmat` | HZM |
+| `search_rescue` | SAR |
+| `other` | OTH |
 
 ---
 
@@ -308,7 +377,7 @@ Renders an emoji + label: fire🔥, medical🚑, police👮, traffic🚗, hazmat
 
 `frontend/src/components/IncidentList.tsx`
 
-Renders the sidebar list of incidents. Highlights the selected incident.
+Renders the left sidebar list of incidents. Highlights the selected incident.
 
 ```tsx
 <IncidentList
@@ -324,7 +393,10 @@ Renders the sidebar list of incidents. Highlights the selected incident.
 | `onSelect` | `(id: string) => void` | Called when an incident row is clicked |
 | `selectedId` | `string \| null` | ID of currently selected incident (highlighted) |
 
-Each row shows: short incident ID, priority badge, status badge, location, type chip, creation time.
+**Features:**
+- **Search input** — filters the visible list by incident ID, `caller_location`, `caller_address`, or `type` (case-insensitive substring match)
+- **Filter tabs** — All / Active / Dispatched / Resolved
+- Each row shows: short incident ID, `PriorityBadge`, `StatusBadge`, address (prefers `caller_address` over `caller_location`), `TypeChip`, creation time
 
 ---
 
@@ -332,7 +404,7 @@ Each row shows: short incident ID, priority badge, status badge, location, type 
 
 `frontend/src/components/IncidentDetail.tsx`
 
-The main content panel. Fetches additional data for the selected incident and renders the full detail view.
+The main content panel. Fetches additional data for the selected incident and renders a tabbed detail view.
 
 ```tsx
 <IncidentDetail
@@ -348,14 +420,22 @@ The main content panel. Fetches additional data for the selected incident and re
 | `units` | `Unit[]` | All units (for dispatch selector) |
 | `onDispatch` | `(incidentId: string, unitId: string) => Promise<void>` | Called when dispatcher submits a manual dispatch |
 
-**Internal fetches:**
-- `GET /incidents/:id/transcript` — loads transcription turns
-- `GET /dispatch/:incident_id` — loads dispatch records
+**Tabs:**
 
-Both are re-fetched whenever `incident.id` changes.
+1. **AI Report** (default) — fetches `GET /report/:incident_id` on mount and on `incident.id` change. Displays:
+   - Summary text
+   - Caller details
+   - Recommended actions list
+   - Dispatcher assigned (name, badge, desk)
+   - Units dispatched (unit code, type, ETA, distance, crew lead)
+   - Timeline events
 
-**Dispatch panel** — only rendered when `incident.status === "active"`:
-- Dropdown showing only `available` units with their code and type
+2. **Transcript** — fetches `GET /incidents/:id/transcript` and renders per-utterance bubbles:
+   - Caller turns: left-aligned, labeled "911"
+   - Agent turns: right-aligned, labeled "AI"
+
+**Dispatch panel** — rendered when `incident.status === "active"`:
+- Dropdown of available units with code and type
 - "Dispatch" button — disabled until a unit is selected
 - Calls `onDispatch(incident.id, selectedUnit)` on submit
 
@@ -365,25 +445,35 @@ Both are re-fetched whenever `incident.id` changes.
 
 `frontend/src/components/UnitPanel.tsx`
 
-The right sidebar showing all units grouped by type.
+The right-sidebar unit list. Fetches mock units with distance and ETA when an incident with a location is selected.
 
 ```tsx
-<UnitPanel units={units} />
+<UnitPanel units={units} incidentLocation={selectedIncident?.caller_location} />
 ```
 
-Units are displayed as compact chips with:
-- Colored dot indicating status
-- Colored border matching status (green/orange/blue/purple)
-- `unit_code` label
-- Tooltip showing full status and incident ID if assigned
+| Prop | Type | Description |
+|---|---|---|
+| `units` | `Unit[]` | Fallback plain DB units |
+| `incidentLocation` | `string \| undefined` | `"lat,lng"` string — triggers `GET /units/mock?lat=&lng=` fetch |
 
-Status color mapping:
-| Status | Color |
-|---|---|
-| `available` | Green `#22c55e` |
-| `dispatched` | Orange `#f97316` |
-| `on_scene` | Blue `#3b82f6` |
-| `returning` | Purple `#a78bfa` |
+**Behavior:**
+- When `incidentLocation` is set (and parseable as `lat,lng`): fetches `GET /units/mock?lat=&lng=` and displays mock units with distance and ETA
+- Falls back to plain `units` prop if the mock fetch fails
+
+**Card design (white background, monochrome):**
+- Semantic **status dot** (colored dot only — no colored border):
+  - Green: `available`
+  - Orange: `dispatched`
+  - Blue: `on_scene`
+  - Purple: `returning`
+- Unit code label, type, zone, status text
+
+**Expandable rows** — click a unit card to expand:
+- Vehicle info (make, model, year, license plate)
+- Crew list (name + role for each member)
+- Equipment tags
+- Assigned incident ID (if `current_incident_id` is set)
+- Distance and ETA (if mock data)
 
 ---
 
@@ -397,23 +487,11 @@ Status color mapping:
 - `Dispatch`
 - `SseEvent`, `SseEventType`
 - `WsClientMessage` and all subtypes (`WsCallStartMessage`, `WsAudioChunkMessage`, `WsCallEndMessage`)
-- `WsServerMessage` and all subtypes
+- `WsServerMessage` and all subtypes (including `WsReportUpdateMessage`, `WsDispatcherApproachingMessage`)
+- `IncidentReport`, `ReportTimelineEvent`, `DispatchedUnitSummary`, `DispatcherAssigned`
 - `ApiSuccess<T>`, `ApiError`, `ApiResponse<T>`
 
 > **Note:** These types are kept in sync manually. If you add a new field to the backend types, update the frontend types file as well.
-
----
-
-## Routing
-
-Routes are defined in `App.tsx`:
-
-| Path | Component | Description |
-|---|---|---|
-| `/` | Redirect to `/dashboard` | — |
-| `/dashboard` | `DispatcherDashboard` | Operator dispatch interface |
-| `/call` | `CallerView` | 911 call simulator |
-| `*` | Redirect to `/dashboard` | 404 fallback |
 
 ---
 

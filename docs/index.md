@@ -88,7 +88,7 @@ bun run dev:frontend
 
 The Vite dev server starts on `http://localhost:5173`.
 
-Open `http://localhost:5173/dashboard` for the dispatcher dashboard, or `http://localhost:5173/call` to simulate a 911 call.
+Open `http://localhost:5173/dashboard` for the dispatcher dashboard, or `http://localhost:5173/` to simulate a 911 call.
 
 ---
 
@@ -124,7 +124,8 @@ rapidresponse/
 │       │   ├── lancedb.ts    # LanceDB connect + Arrow schemas
 │       │   └── migrations/   # Numbered SQL migration files
 │       ├── agents/
-│       │   └── novaAgent.ts  # Nova Sonic bidirectional stream agent
+│   │   ├── novaAgent.ts  # Nova Sonic bidirectional stream agent
+│   │   └── reportAgent.ts# Nova Lite report generation (every 30s)
 │       ├── services/
 │       │   ├── sseService.ts
 │       │   ├── storageService.ts
@@ -133,11 +134,13 @@ rapidresponse/
 │       │   ├── transcriptionService.ts
 │       │   └── dispatchService.ts
 │       ├── routes/
-│       │   ├── incidents.ts
-│       │   ├── units.ts
-│       │   ├── dispatch.ts
-│       │   ├── protocols.ts
-│       │   └── recordings.ts
+│   │   ├── incidents.ts
+│   │   ├── units.ts
+│   │   ├── dispatch.ts
+│   │   ├── protocols.ts
+│   │   ├── recordings.ts
+│   │   ├── reportRoute.ts# GET /report/:incident_id (in-memory cache)
+│   │   └── mockRoute.ts  # GET /mock/dispatchers
 │       ├── ws/
 │       │   └── callHandler.ts
 │       └── __tests__/
@@ -149,6 +152,10 @@ rapidresponse/
         ├── main.tsx
         ├── types/index.ts
         ├── hooks/
+        │   ├── useIncidents.ts
+        │   ├── useUnits.ts
+        │   ├── useCallSocket.ts
+        │   └── useCallerInfo.ts    # GPS + Nominatim reverse geocode
         ├── components/
         └── pages/
 ```
@@ -165,6 +172,7 @@ Copy `.env.example` to `.env` and fill in all values. The table below describes 
 | `AWS_ACCESS_KEY_ID` | Yes | — | IAM access key |
 | `AWS_SECRET_ACCESS_KEY` | Yes | — | IAM secret key |
 | `BEDROCK_NOVA_SONIC_MODEL_ID` | Yes | — | Nova Sonic 2 model ID, e.g. `amazon.nova-2-sonic-v1:0` |
+| `BEDROCK_NOVA_LITE_MODEL_ID` | Yes | — | Nova Lite model ID for report generation, e.g. `amazon.nova-lite-v1:0` |
 | `BEDROCK_TITAN_EMBED_MODEL_ID` | Yes | — | Titan Embeddings v2 model ID, e.g. `amazon.titan-embed-text-v2:0` |
 | `S3_BUCKET_NAME` | Yes | — | S3 bucket for audio recordings and transcripts |
 | `LIBSQL_URL` | No | `file:./data/rapidresponse.db` | libSQL connection URL. Use `file:` for embedded, `http://localhost:8080` for networked sqld |
@@ -189,6 +197,7 @@ The IAM user/role must have:
   ],
   "Resource": [
     "arn:aws:bedrock:*::foundation-model/amazon.nova-2-sonic-v1:0",
+    "arn:aws:bedrock:*::foundation-model/amazon.nova-lite-v1:0",
     "arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v2:0"
   ]
 }
@@ -237,7 +246,6 @@ Run from the `backend/` directory or with `bun run --filter backend <script>`:
 | Script | Description |
 |---|---|
 | `db:migrate` | Apply pending SQL migrations |
-| `db:migrate:status` | Show which migrations have been applied |
 | `seed` | Populate DB with sample units and incidents |
 | `ingest:protocols` | Chunk, embed and store protocol documents in LanceDB |
 
@@ -257,12 +265,6 @@ Run migrations:
 
 ```bash
 bun run db:migrate
-```
-
-Check migration status:
-
-```bash
-bun run db:migrate:status
 ```
 
 #### Schema overview

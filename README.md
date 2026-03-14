@@ -19,10 +19,11 @@ RapidResponse.ai is a municipal-grade 911 emergency response platform where an A
 - AWS Nova Sonic 2 (Bedrock) handles the full caller interaction autonomously
 - Real-time transcription saved per-utterance to libSQL (open-source embedded)
 - Emergency protocols (MPDS-style) stored as vectors in LanceDB; queried via RAG on every call
-- Incident classification: type (medical / fire / law enforcement / hazmat / other) and priority 1–5
+- Incident classification: type (medical / fire / law enforcement / hazmat / other) and priority P1–P4 (life-threatening → non-urgent)
+- AI-generated incident reports via Report Agent (AWS Bedrock Nova Lite) — updated every ~30s during active calls
 - S2 geometry indexing in LanceDB for fast caller location proximity queries
 - Raw audio recordings stored in AWS S3
-- React/TypeScript dispatcher dashboard with live incident feed, unit tracker, and full call replay
+- React/TypeScript dispatcher dashboard — white/black monochrome design, live incident feed, AI report panel, unit tracker with distance + ETA, and full call replay
 
 ---
 
@@ -125,7 +126,8 @@ rapidresponse/
 │   │   ├── index.ts                # Entry point — starts Bun server
 │   │   ├── server.ts               # HTTP server, WebSocket upgrade, SSE
 │   │   ├── agents/
-│   │   │   └── novaAgent.ts        # Nova Sonic bidirectional stream handler
+│   │   │   ├── novaAgent.ts        # Nova Sonic bidirectional stream handler
+│   │   │   └── reportAgent.ts      # Report Agent — Nova Lite, periodic report gen
 │   │   ├── services/
 │   │   │   ├── transcriptionService.ts   # Save transcript turns to libSQL
 │   │   │   ├── incidentService.ts        # Incident CRUD + classification
@@ -139,13 +141,18 @@ rapidresponse/
 │   │   │   │   └── 002_add_indexes.sql
 │   │   │   └── lancedb.ts          # LanceDB init, collection schemas
 │   │   ├── routes/
-│   │   │   ├── incidents.ts        # GET/POST /incidents
-│   │   │   ├── units.ts            # GET/POST /units
-│   │   │   ├── dispatch.ts         # POST /dispatch
-│   │   │   ├── protocols.ts        # GET /protocols
-│   │   │   └── recordings.ts       # GET /recordings/:incidentId
+│   │   │   ├── incidents.ts        # GET/PATCH /incidents
+│   │   │   ├── units.ts            # GET/POST/PATCH /units + GET /units/mock
+│   │   │   ├── dispatch.ts         # POST/GET/PATCH /dispatch
+│   │   │   ├── protocols.ts        # GET /protocols/search
+│   │   │   ├── recordings.ts       # GET /recordings/:incidentId
+│   │   │   ├── reportRoute.ts      # GET /report/:incident_id
+│   │   │   └── mockRoute.ts        # GET /mock/dispatchers
 │   │   └── types/
 │   │       └── index.ts            # Shared TypeScript types
+│   ├── data/
+│   │   └── mock/
+│   │       └── dispatchers.json    # Springfield IL mock dataset
 │   ├── protocols/                  # Upload emergency protocol docs here
 │   │   └── .gitkeep
 │   └── scripts/
@@ -162,19 +169,17 @@ rapidresponse/
         ├── main.tsx
         ├── App.tsx
         ├── components/
-        │   ├── IncidentBoard.tsx    # Live active incidents list
-        │   ├── IncidentCard.tsx     # Single incident card with priority badge
-        │   ├── CallPanel.tsx        # Transcript viewer + audio playback
-        │   ├── UnitTracker.tsx      # Unit status map/table
-        │   ├── PriorityBadge.tsx    # Color-coded priority 1–5 badge
-        │   ├── CallerView.tsx       # Browser UI for caller — mic + status
-        │   └── DispatchControls.tsx # Assign unit to incident
+        │   ├── Badges.tsx          # PriorityBadge, StatusBadge, TypeChip (monochrome)
+        │   ├── IncidentList.tsx    # Sidebar — search, filter tabs, incident rows
+        │   ├── IncidentDetail.tsx  # AI Report tab + Transcript tab
+        │   └── UnitPanel.tsx       # Unit cards with distance + ETA, expandable rows
         ├── hooks/
-        │   ├── useIncidentFeed.ts   # SSE subscription to live incidents
-        │   ├── useCallSession.ts    # WebSocket audio session management
-        │   └── useUnits.ts          # Units polling/state
+        │   ├── useCallerInfo.ts    # GPS, reverse geocode, persistent caller UUID
+        │   ├── useCallSocket.ts    # WebSocket audio session management
+        │   ├── useIncidents.ts     # SSE subscription + REST for live incident list
+        │   └── useUnits.ts         # Units polling/state
         └── types/
-            └── index.ts             # Frontend TypeScript types
+            └── index.ts            # Frontend TypeScript types
 ```
 
 ---
@@ -204,6 +209,7 @@ cp .env.example .env
 | `AWS_ACCESS_KEY_ID` | AWS | IAM access key with Bedrock + S3 permissions |
 | `AWS_SECRET_ACCESS_KEY` | AWS | IAM secret key |
 | `BEDROCK_NOVA_SONIC_MODEL_ID` | Bedrock | Nova Sonic 2 model ID (`amazon.nova-2-sonic-v1:0`) |
+| `BEDROCK_NOVA_LITE_MODEL_ID` | Bedrock | Nova Lite model ID for Report Agent (`amazon.nova-lite-v1:0`) |
 | `BEDROCK_TITAN_EMBED_MODEL_ID` | Bedrock | Titan Embeddings v2 model ID |
 | `LIBSQL_URL` | libSQL | `file:./data/rapidresponse.db` (default) or `http://localhost:8080` (sqld) |
 | `LIBSQL_AUTH_TOKEN` | libSQL | Optional — only set when using sqld with auth enabled |
@@ -288,7 +294,7 @@ bun run dev:frontend
 |---|---|
 | Backend HTTP + WebSocket | `http://localhost:3000` |
 | Dispatcher Dashboard | `http://localhost:5173` |
-| Caller Web App | `http://localhost:5173/call` |
+| Caller Web App | `http://localhost:5173/` |
 
 ---
 
@@ -316,128 +322,71 @@ All scripts are run from the project root.
 
 ## API Reference
 
-### WebSocket — Call Session
+See [`docs/api-reference.md`](docs/api-reference.md) for the full API documentation including all REST endpoints, WebSocket message schemas, SSE event types, and call sequence diagrams.
+
+### Quick Reference
+
+#### WebSocket — Call Session
 
 **Endpoint:** `ws://host/call`
 
-The caller's browser opens a WebSocket connection. Audio is streamed as binary frames (PCM 16-bit, 16kHz, mono). The server streams AI audio response back as binary frames in the same format.
-
-| Direction | Format | Description |
+| Direction | Type | Description |
 |---|---|---|
-| Client → Server | Binary (PCM) | Microphone audio chunk |
-| Client → Server | JSON text | `{ type: "call_start", location: "...", callerId: "..." }` |
-| Client → Server | JSON text | `{ type: "call_end" }` |
-| Server → Client | Binary (PCM) | Nova Sonic audio response |
-| Server → Client | JSON text | `{ type: "transcript", speaker: "caller\|ai", text: "...", timestamp: "..." }` |
-| Server → Client | JSON text | `{ type: "incident_created", incidentId: "...", priority: 1-5, classification: "..." }` |
+| Browser → Server | `call_start` | Start call — `{ type, caller_id, location, address }` |
+| Browser → Server | `audio_chunk` | PCM audio — `{ type, data: base64 16kHz PCM }` |
+| Browser → Server | `call_end` | End call cleanly |
+| Server → Browser | `call_accepted` | `{ type, incident_id }` |
+| Server → Browser | `audio_response` | `{ type, data: base64 24kHz PCM }` |
+| Server → Browser | `transcript_update` | `{ type, role, text }` |
+| Server → Browser | `incident_classified` | `{ type, incident_type, priority }` |
+| Server → Browser | `report_update` | `{ type, report: IncidentReport }` |
+| Server → Browser | `dispatcher_approaching` | `{ type, unit_code, eta_minutes, crew[] }` |
+| Server → Browser | `call_ended` | `{ type, incident_id }` |
 
-### REST API
-
-#### Incidents
+#### REST API (summary)
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/incidents` | List all incidents (query: `?status=active`) |
-| `GET` | `/incidents/:id` | Get single incident with full details |
-| `GET` | `/incidents/:id/transcript` | Get full transcript for an incident |
-| `POST` | `/incidents` | Create incident manually |
-| `PATCH` | `/incidents/:id` | Update incident status or priority |
-
-#### Units
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/units` | List all units with current status |
-| `POST` | `/units` | Register a new unit |
-| `PATCH` | `/units/:id` | Update unit status or location |
-
-#### Dispatch
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/dispatch` | Assign unit to incident `{ incidentId, unitId }` |
-| `PATCH` | `/dispatch/:id/arrive` | Mark unit as arrived on scene |
-| `PATCH` | `/dispatch/:id/clear` | Clear unit from incident |
-
-#### Protocols
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/protocols` | List all ingested protocol documents |
-| `GET` | `/protocols/search?q=...` | Vector search protocols by query |
-
-#### Recordings
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/recordings/:incidentId` | List S3 audio files for an incident |
-| `GET` | `/recordings/:incidentId/url` | Get presigned S3 URL for playback |
-
-### Server-Sent Events
-
-**Endpoint:** `GET /events`
-
-Dispatcher dashboard subscribes to this SSE stream for live updates.
-
-| Event | Payload |
-|---|---|
-| `incident_created` | Full incident object |
-| `incident_updated` | `{ id, changes }` |
-| `unit_updated` | Full unit object |
-| `transcript_turn` | `{ incidentId, speaker, text, timestamp }` |
+| `GET` | `/incidents` | List incidents (query: `status`, `limit`, `offset`) |
+| `GET` | `/incidents/:id` | Get single incident |
+| `GET` | `/incidents/:id/transcript` | Get transcription turns |
+| `PATCH` | `/incidents/:id` | Update incident |
+| `GET` | `/units` | List units |
+| `GET` | `/units/mock?lat=&lng=` | Mock units with distance + ETA |
+| `POST` | `/units` | Create unit |
+| `PATCH` | `/units/:id` | Update unit status |
+| `POST` | `/dispatch` | Dispatch a unit to an incident |
+| `GET` | `/dispatch/:incident_id` | List dispatch records |
+| `PATCH` | `/dispatch/:dispatch_id/arrive` | Mark unit arrived |
+| `PATCH` | `/dispatch/:dispatch_id/clear` | Clear unit |
+| `GET` | `/protocols/search?q=` | RAG vector search |
+| `GET` | `/recordings/:id/playback?key=` | Presigned S3 URL |
+| `GET` | `/recordings/:id/transcript` | Presigned S3 transcript URL |
+| `GET` | `/report/:incident_id` | AI-generated incident report |
+| `GET` | `/mock/dispatchers` | Mock dispatchers, zones, hospitals |
+| `GET` | `/events` | SSE stream |
+| `GET` | `/health` | Health check |
 
 ---
 
 ## Data Model
 
+See [`docs/architecture.md`](docs/architecture.md) for the complete database schema.
+
 ### libSQL — Structured Data (open-source embedded)
 
-```sql
--- Active and historical incidents
-CREATE TABLE incidents (
-  id           TEXT PRIMARY KEY,
-  caller_id    TEXT,
-  type         TEXT NOT NULL,         -- medical | fire | law | hazmat | other
-  priority     INTEGER NOT NULL,      -- 1 (critical) to 5 (low)
-  status       TEXT NOT NULL,         -- active | dispatched | resolved | closed
-  location     TEXT,                  -- Free-text address extracted by AI
-  lat          REAL,
-  lng          REAL,
-  s2_cell_id   TEXT,                  -- S2 cell token for LanceDB proximity
-  created_at   TEXT NOT NULL,
-  updated_at   TEXT NOT NULL
-);
+Key tables:
 
--- Per-utterance transcript log
-CREATE TABLE transcriptions (
-  id           TEXT PRIMARY KEY,
-  incident_id  TEXT NOT NULL REFERENCES incidents(id),
-  speaker      TEXT NOT NULL,         -- caller | ai
-  text         TEXT NOT NULL,
-  timestamp    TEXT NOT NULL
-);
+| Table | Purpose |
+|---|---|
+| `incidents` | Active and historical incidents (id, caller_id, caller_location, caller_address, status, type, priority, summary, timestamps, S3 keys) |
+| `transcription_turns` | Per-utterance transcript log (id, incident_id, role, text, timestamp_ms) |
+| `units` | Emergency response units (id, unit_code, type, status, current_incident_id) |
+| `dispatches` | Dispatch assignments (id, incident_id, unit_id, dispatched_at, arrived_at, cleared_at) |
 
--- Emergency response units
-CREATE TABLE units (
-  id           TEXT PRIMARY KEY,
-  name         TEXT NOT NULL,         -- e.g. "Engine 7", "Unit 42"
-  type         TEXT NOT NULL,         -- police | fire | ems | hazmat
-  status       TEXT NOT NULL,         -- available | dispatched | on_scene | off_duty
-  lat          REAL,
-  lng          REAL,
-  updated_at   TEXT NOT NULL
-);
+**Priority values:** `P1` (life-threatening), `P2` (urgent), `P3` (standard), `P4` (non-urgent)
 
--- Dispatch assignments
-CREATE TABLE dispatches (
-  id           TEXT PRIMARY KEY,
-  incident_id  TEXT NOT NULL REFERENCES incidents(id),
-  unit_id      TEXT NOT NULL REFERENCES units(id),
-  dispatched_at TEXT NOT NULL,
-  arrived_at   TEXT,
-  cleared_at   TEXT
-);
-```
+**Incident types:** `fire`, `medical`, `police`, `traffic`, `hazmat`, `search_rescue`, `other`
 
 ### LanceDB — Vector Collections
 
@@ -504,11 +453,17 @@ The ECS task role must have:
 {
   "bedrock:InvokeModel",
   "bedrock:InvokeModelWithResponseStream",
+  "bedrock:InvokeModelWithBidirectionalStream",
   "s3:PutObject",
   "s3:GetObject",
   "s3:ListBucket"
 }
 ```
+
+**Required model ARNs:**
+- `arn:aws:bedrock:<region>::foundation-model/amazon.nova-2-sonic-v1:0`
+- `arn:aws:bedrock:<region>::foundation-model/amazon.titan-embed-text-v2:0`
+- `arn:aws:bedrock:<region>::foundation-model/amazon.nova-lite-v1:0`
 
 ---
 

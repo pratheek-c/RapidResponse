@@ -35,14 +35,17 @@ This document describes the system design, data flow, and service layer of Rapid
 │                              (server.ts)                                   │
 │                                                                            │
 │  WS /call ──► callHandler.ts ──► novaAgent.ts ──► AWS Bedrock Nova Sonic  │
+│                    │                                                        │
+│                    └──► reportAgent.ts ──► AWS Bedrock Nova Lite           │
 │                                                                            │
 │  GET  /incidents[/:id]     GET  /recordings/...                            │
 │  PATCH /incidents/:id      GET  /protocols/search                          │
 │  GET  /units[/:id]         GET  /events (SSE)                              │
 │  POST/PATCH /units/:id     GET  /health                                    │
-│  POST  /dispatch                                                           │
-│  GET   /dispatch/:id                                                       │
+│  POST  /dispatch           GET  /report/:incident_id                       │
+│  GET   /dispatch/:id       GET  /mock/dispatchers                          │
 │  PATCH /dispatch/:id/arrive|clear                                          │
+│  GET   /units/mock?lat=&lng=                                               │
 └─────────────────────────┬──────────────────────────────────────────────────┘
                           │
           ┌───────────────┼──────────────────┐
@@ -73,7 +76,8 @@ This document describes the system design, data flow, and service layer of Rapid
 | Audio storage | AWS S3 | Durable object storage, presigned URL playback |
 | HTTP/WS server | Bun.serve() | No express, no ws package, WebSocket upgrade built in |
 | Frontend | React 18 + Vite | Fast HMR, standard React ecosystem |
-| Frontend routing | React Router v6 | Client-side routing for /dashboard and /call |
+| Frontend routing | React Router v6 | Client-side routing for `/` (CallerView) and `/dashboard` |
+| Report Agent | AWS Bedrock Nova Lite | Periodic structured incident report generation (non-streaming) |
 
 ---
 
@@ -101,64 +105,77 @@ The three data stores are strictly separated:
 ## Full Call Lifecycle
 
 ```
-1.  Caller opens /call in browser
-2.  Browser requests mic permission
-3.  Browser opens WebSocket to ws://backend/call
-4.  Browser sends: { type: "call_start", caller_id: "...", location: "..." }
-5.  callHandler.ts creates incident in libSQL (status: "active")
-6.  callHandler.ts fires SSE: incident_created → dashboard
-7.  callHandler.ts opens Nova Sonic bidirectional stream (novaAgent.ts)
-8.  Server sends: { type: "call_accepted", incident_id: "..." }
+1.  Caller opens / in browser
+2.  useCallerInfo() generates a persistent callerId (localStorage), requests GPS,
+    and reverse-geocodes coordinates via OpenStreetMap Nominatim
+3.  CallerView auto-arms: calls startCall(callerId, location, address) on mount
+4.  Browser opens WebSocket to ws://backend/call
+5.  Browser sends: { type: "call_start", caller_id: "...", location: "lat,lng", address: "..." }
+6.  callHandler.ts creates incident in libSQL (status: "active")
+7.  callHandler.ts fires SSE: incident_created → dashboard
+8.  callHandler.ts opens Nova Sonic bidirectional stream (novaAgent.ts)
+9.  Server sends: { type: "call_accepted", incident_id: "..." }
 
 During call:
-9.  Browser captures PCM audio via MediaRecorder (32ms chunks)
-10. Browser sends: { type: "audio_chunk", data: "<base64 PCM 16kHz>" }
-11. callHandler forwards audio to novaAgent.sendAudio()
-12. novaAgent sends audioInput events to Bedrock HTTP/2 stream
-13. Bedrock responds with audioOutput → base64 PCM 24kHz
-14. novaAgent calls callbacks.onAudioOutput(base64Pcm)
-15. callHandler sends: { type: "audio_response", data: "..." } to browser
-16. Browser decodes PCM and plays through AudioContext (24kHz)
+10. Browser captures PCM audio via MediaRecorder (32ms chunks)
+11. Browser sends: { type: "audio_chunk", data: "<base64 PCM 16kHz>" }
+12. callHandler forwards audio to novaAgent.sendAudio()
+13. novaAgent sends audioInput events to Bedrock HTTP/2 stream
+14. Bedrock responds with audioOutput → base64 PCM 24kHz
+15. novaAgent calls callbacks.onAudioOutput(base64Pcm)
+16. callHandler sends: { type: "audio_response", data: "..." } to browser
+17. Browser decodes PCM and plays through AudioContext (24kHz)
 
 Transcription:
-17. Bedrock sends textOutput events with transcribed turns
-18. novaAgent calls callbacks.onTranscript(role, text)
-19. callHandler saves turn to libSQL (fire-and-forget)
-20. callHandler sends: { type: "transcript_update", role, text } to browser
+18. Bedrock sends textOutput events with transcribed turns
+19. novaAgent calls callbacks.onTranscript(role, text)
+20. callHandler saves turn to libSQL (fire-and-forget)
+21. callHandler sends: { type: "transcript_update", role, text } to browser
 
 Barge-in:
-21. If caller interrupts agent: textOutput has { interrupted: true }
-22. novaAgent sends "__FLUSH__" sentinel to callbacks.onAudioOutput
-23. Frontend flushes pending audio queue
+22. If caller interrupts agent: textOutput has { interrupted: true }
+23. novaAgent sends "__FLUSH__" sentinel to callbacks.onAudioOutput
+24. Frontend flushes pending audio queue
 
 Incident classification:
-24. Nova Sonic fires classify_incident tool when it has enough info
-25. novaAgent.executeTool() calls incidentService.classifyIncident()
-26. incidentService updates libSQL, fires SSE: incident_classified
-27. callHandler sends: { type: "incident_classified", ... } to browser
+25. Nova Sonic fires classify_incident tool when it has enough info
+26. novaAgent.executeTool() calls incidentService.classifyIncident()
+27. incidentService updates libSQL, fires SSE: incident_classified
+28. callHandler sends: { type: "incident_classified", ... } to browser
 
 RAG protocol lookup:
-28. Nova Sonic fires get_protocol tool
-29. novaAgent.executeTool() calls ragService.searchProtocols(query, 3)
-30. ragService embeds query with Titan Embeddings v2
-31. ragService queries LanceDB protocols collection (cosine similarity)
-32. Top-3 chunks returned as context injected into Nova Sonic next turn
+29. Nova Sonic fires get_protocol tool
+30. novaAgent.executeTool() calls ragService.searchProtocols(query, 3)
+31. ragService embeds query with Titan Embeddings v2
+32. ragService queries LanceDB protocols collection (cosine similarity)
+33. Top-3 chunks returned as context injected into Nova Sonic next turn
 
 Unit dispatch:
-33. Nova Sonic fires dispatch_unit tool
-34. novaAgent.executeTool() calls dispatchService.dispatchUnit()
-35. dispatchService finds first available unit of requested type
-36. dispatchService creates dispatch record, updates unit + incident status
-37. dispatchService fires SSE: unit_dispatched → dashboard
+34. Nova Sonic fires dispatch_unit tool
+35. novaAgent.executeTool() calls dispatchService.dispatchUnit()
+36. dispatchService finds first available unit of requested type
+37. dispatchService creates dispatch record, updates unit + incident status
+38. dispatchService fires SSE: unit_dispatched → dashboard
+
+Report generation (Report Agent):
+39. callHandler triggers generateReport() on: incident classified, unit dispatched,
+    and every ~30s via interval timer
+40. reportAgent.ts calls GET /units/mock?lat=&lng= to get units with distance/ETA
+41. reportAgent.assignDispatcher() matches caller GPS to zone bbox, selects on-duty dispatcher
+42. reportAgent.generateReport() calls Bedrock Nova Lite (InvokeModelCommand) with
+    transcript + context, produces structured IncidentReport JSON
+43. callHandler sends: { type: "report_update", report: IncidentReport } to browser
+44. If any dispatched unit has eta_minutes <= 3:
+    callHandler sends: { type: "dispatcher_approaching", unit_code, eta_minutes, crew } to browser
 
 Call end:
-38. Caller sends { type: "call_end" } OR Nova Sonic ends session
-39. callHandler calls session.close()
-40. callHandler exports transcript JSON from libSQL
-41. callHandler uploads transcript JSON to S3
-42. callHandler updates incident with s3_transcript_key
-43. callHandler sends: { type: "call_ended", incident_id } to browser
-44. SSE: call_ended broadcast to dashboard
+45. Caller sends { type: "call_end" } OR Nova Sonic ends session
+46. callHandler calls session.close()
+47. callHandler exports transcript JSON from libSQL
+48. callHandler uploads transcript JSON to S3
+49. callHandler updates incident with s3_transcript_key
+50. callHandler sends: { type: "call_ended", incident_id } to browser
+51. SSE: call_ended broadcast to dashboard
 ```
 
 **Session renewal:** Nova Sonic has an 8-minute maximum session duration. A timer fires at 7m30s and triggers `callbacks.onEnd("session_renewal")`. Session renewal for very long calls is flagged as a TODO in `callHandler.ts`.
@@ -236,9 +253,66 @@ In-process SSE client registry and broadcast.
 | `sseSend(type, incident_id, payload)` | Convenience wrapper for `sseBroadcast` |
 | `sseClientCount()` | Returns number of connected clients |
 
+### `mockRoute.ts`
+
+Serves static mock data from `backend/data/mock/dispatchers.json`. No database query involved.
+
+| Route | Description |
+|---|---|
+| `GET /mock/dispatchers` | Returns all dispatchers, zones, and hospitals from mock JSON |
+| `GET /units/mock?lat=&lng=` | Returns all mock units enriched with haversine distance + ETA from given coords |
+
 ---
 
-## Nova Sonic Agent
+## Report Agent
+
+`backend/src/agents/reportAgent.ts` generates structured incident reports during active calls using AWS Bedrock Nova Lite.
+
+### Overview
+
+Unlike Nova Sonic (which uses a bidirectional streaming session), the Report Agent uses `InvokeModelCommand` — a standard synchronous request/response call. It is triggered:
+
+- When an incident is classified (`classify_incident` tool fires)
+- When a unit is dispatched (`dispatch_unit` tool fires)
+- On a repeating ~30-second interval during the call
+
+### `generateReport(ctx: ReportContext): Promise<IncidentReport>`
+
+Takes a `ReportContext` containing:
+
+| Field | Description |
+|---|---|
+| `incident_id` | UUID of the active incident |
+| `caller_location` | `"lat,lng"` GPS string |
+| `caller_address` | Human-readable address |
+| `incident_type` | Classified type, or `null` |
+| `priority` | Classified priority, or `null` |
+| `status` | Current incident status |
+| `call_start_ms` | Unix timestamp of call start |
+| `transcript` | All `TranscriptionTurn[]` so far |
+| `dispatched_units` | `MockUnitWithDistance[]` — units with distance + ETA |
+| `assigned_dispatcher_id` | If already assigned, this dispatcher is used; otherwise `assignDispatcher()` is called |
+| `mock_data` | Full mock dataset (dispatchers, zones, hospitals) |
+
+**Steps:**
+
+1. **Dispatcher assignment** — `assignDispatcher()` detects the S2-style zone bbox that contains the caller GPS coordinates, then picks the first on-duty dispatcher whose `assigned_zones` includes that zone. Falls back to the first on-duty dispatcher if no zone match.
+
+2. **Unit summaries** — `buildDispatchedUnits()` converts `MockUnitWithDistance[]` → `DispatchedUnitSummary[]` (including `crew_lead`, `eta_minutes`, `distance_km`).
+
+3. **Timeline** — `buildTimeline()` samples every 3rd caller turn, truncated to 120 characters each, to keep the report concise.
+
+4. **Nova Lite call** — Sends the last 20 transcript turns + context to Nova Lite with `maxTokens: 512, temperature: 0.2`. The model returns JSON with `summary`, `caller_details`, `recommended_actions`.
+
+5. **Approaching unit** — Any dispatched unit with `eta_minutes <= 3` is surfaced as `approaching_unit` in the report. This is used by the call handler to send `dispatcher_approaching` WS messages.
+
+6. **Fallback** — If Nova Lite throws, pre-filled default strings are used and the error is logged. The report is always returned, never null.
+
+### `assignDispatcher(callerLocation, mockData): MockDispatcher | null`
+
+Exported separately for use outside the report generation cycle (e.g. immediate assignment on call start).
+
+Zone detection parses `"lat,lng"`, then checks each zone's `bbox.sw` / `bbox.ne` for containment. Falls back to first on-duty dispatcher if no zone is matched.
 
 `backend/src/agents/novaAgent.ts` manages the AWS Bedrock Nova Sonic 2 bidirectional stream.
 
@@ -353,10 +427,11 @@ incidentService.createIncident()
 |---|---|---|
 | `id` | TEXT PK | UUID |
 | `caller_id` | TEXT NOT NULL | Caller identifier |
-| `caller_location` | TEXT NOT NULL | Reported location |
+| `caller_location` | TEXT NOT NULL | GPS coordinates (`"lat,lng"`) |
+| `caller_address` | TEXT | Human-readable reverse-geocoded address |
 | `status` | TEXT | `active`, `dispatched`, `resolved`, `cancelled` |
 | `type` | TEXT | `fire`, `medical`, `police`, `traffic`, `hazmat`, `search_rescue`, `other` |
-| `priority` | TEXT | `P1`, `P2`, `P3`, `P4` |
+| `priority` | TEXT | `P1` (life-threatening), `P2` (urgent), `P3` (standard), `P4` (non-urgent) |
 | `summary` | TEXT | Free-text summary |
 | `created_at` | TEXT | ISO 8601 |
 | `updated_at` | TEXT | ISO 8601 |
