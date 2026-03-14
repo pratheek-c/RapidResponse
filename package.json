@@ -1,0 +1,12 @@
+{
+  "name": "rapidresponse",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["backend"],
+  "scripts": {
+    "dev:backend": "bun run --filter backend dev",
+    "build:backend": "bun run --filter backend build",
+    "test": "bun test",
+    "test:backend": "bun test --filter backend"
+  }
+}

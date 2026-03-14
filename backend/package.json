@@ -1,0 +1,27 @@
+{
+  "name": "backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "test": "bun test",
+    "db:migrate": "bun run scripts/migrate.ts",
+    "ingest:protocols": "bun run scripts/ingest.ts",
+    "seed": "bun run scripts/seed.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.758.0",
+    "@aws-sdk/client-s3": "^3.758.0",
+    "@aws-sdk/s3-request-presigner": "^3.758.0",
+    "@libsql/client": "^0.14.0",
+    "@lancedb/lancedb": "^0.18.0",
+    "@smithy/node-http-handler": "^4.0.4",
+    "apache-arrow": "^18.1.0",
+    "s2-geometry": "^1.2.10"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+bun.lockb
+
+# Data directories (runtime-generated)
+backend/data/
+frontend/dist/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build output
+dist/
+build/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
