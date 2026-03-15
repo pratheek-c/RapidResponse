@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   onAuthStateChanged,
-  signInWithRedirect,
-  getRedirectResult,
+  signInWithPopup,
   signOut as firebaseSignOut,
   type User,
 } from "firebase/auth";
@@ -10,9 +9,11 @@ import { firebaseAuth, googleProvider, hasFirebaseConfig } from "@/config/fireba
 import type { Department } from "@/types/dashboard";
 
 const DEPT_KEY = "rr_dispatch_department";
+const DEV_BYPASS_KEY = "rr_dev_bypass";
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
+  const [devBypass, setDevBypass] = useState(() => localStorage.getItem(DEV_BYPASS_KEY) === "1");
   const [loading, setLoading] = useState(true);
   const [department, setDepartmentState] = useState<Department | null>(() => {
     const stored = localStorage.getItem(DEPT_KEY);
@@ -28,11 +29,10 @@ export function useAuth() {
   });
 
   useEffect(() => {
-    // Handle the redirect result when the page loads after Google sign-in
-    getRedirectResult(firebaseAuth).catch(() => {
-      // Ignore — no redirect in progress or already handled by onAuthStateChanged
-    });
-
+    if (!firebaseAuth) {
+      setLoading(false);
+      return;
+    }
     const unsub = onAuthStateChanged(firebaseAuth, (nextUser) => {
       setUser(nextUser);
       setLoading(false);
@@ -46,19 +46,30 @@ export function useAuth() {
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
-    if (!hasFirebaseConfig) {
+    if (!hasFirebaseConfig || !firebaseAuth) {
       throw new Error("Missing Firebase config in VITE_FIREBASE_* environment variables.");
     }
-    // Use redirect instead of popup — popup requires third-party storage access
-    // which is blocked by Edge/Safari/Firefox tracking prevention
-    await signInWithRedirect(firebaseAuth, googleProvider);
+    try {
+      await signInWithPopup(firebaseAuth, googleProvider);
+    } catch (err) {
+      // Popup blocked or COOP issue — re-throw so LoginPage can show the error
+      throw err;
+    }
+  }, []);
+
+  const signInDev = useCallback(() => {
+    localStorage.setItem(DEV_BYPASS_KEY, "1");
+    setDevBypass(true);
+    setLoading(false);
   }, []);
 
   const signOut = useCallback(async () => {
-    await firebaseSignOut(firebaseAuth);
+    localStorage.removeItem(DEV_BYPASS_KEY);
+    setDevBypass(false);
+    if (firebaseAuth) await firebaseSignOut(firebaseAuth);
   }, []);
 
-  const isAuthenticated = useMemo(() => Boolean(user), [user]);
+  const isAuthenticated = useMemo(() => devBypass || Boolean(user), [devBypass, user]);
 
   return {
     user,
@@ -67,6 +78,7 @@ export function useAuth() {
     department,
     setDepartment,
     signInWithGoogle,
+    signInDev,
     signOut,
     hasFirebaseConfig,
   };

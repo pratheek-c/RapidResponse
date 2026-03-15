@@ -12,6 +12,11 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    headers: {
+      // Allow Firebase popup auth — strict COOP blocks window.closed polling
+      "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
+      "Cross-Origin-Embedder-Policy": "unsafe-none",
+    },
     proxy: {
       // REST routes — hooks use bare paths (no /api prefix)
       "/incidents": { target: "http://localhost:3000", changeOrigin: true },

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ShieldAlert, ShieldCheck, RadioTower } from "lucide-react";
 import { Navigate } from "react-router-dom";
 import type { Department } from "@/types/dashboard";
@@ -12,18 +13,26 @@ const DEPARTMENTS: { id: Department; label: string; description: string }[] = [
 ];
 
 export function LoginPage() {
-  const { isAuthenticated, department, setDepartment, signInWithGoogle, hasFirebaseConfig } =
+  const { isAuthenticated, department, setDepartment, signInWithGoogle, signInDev, hasFirebaseConfig } =
     useAuth();
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [signingIn, setSigningIn] = useState(false);
 
   if (isAuthenticated) {
     return <Navigate to="/dashboard" replace />;
   }
 
-  // signInWithRedirect navigates away from the page — no .then() navigation needed.
-  // On return, onAuthStateChanged fires, isAuthenticated becomes true, and the
-  // Navigate above handles routing to /dashboard.
-  function handleSignIn() {
-    void signInWithGoogle();
+  async function handleSignIn() {
+    setAuthError(null);
+    setSigningIn(true);
+    try {
+      await signInWithGoogle();
+      // onAuthStateChanged fires → isAuthenticated → Navigate to /dashboard
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Sign-in failed. Try again.");
+    } finally {
+      setSigningIn(false);
+    }
   }
 
   return (
@@ -107,7 +116,7 @@ export function LoginPage() {
           <button
             type="button"
             onClick={() => void handleSignIn()}
-            disabled={!department || !hasFirebaseConfig}
+            disabled={!department || !hasFirebaseConfig || signingIn}
             className="mt-5 flex w-full items-center justify-center gap-2.5 rounded-xl border border-blue-700/70 bg-blue-600/20 px-4 py-2.5 text-sm font-semibold text-blue-100 transition-colors hover:bg-blue-600/30 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {/* Google "G" icon */}
@@ -129,8 +138,28 @@ export function LoginPage() {
                 fill="#EA4335"
               />
             </svg>
-            Continue with Google
+            {signingIn ? "Signing in…" : "Continue with Google"}
           </button>
+
+          {/* Sign-in error */}
+          {authError && (
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-700/50 bg-red-900/20 px-3 py-2.5">
+              <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-red-400" />
+              <p className="text-xs text-red-300">{authError}</p>
+            </div>
+          )}
+
+          {/* Dev bypass */}
+          {import.meta.env.DEV && (
+            <button
+              type="button"
+              onClick={() => { if (department) { signInDev(); } }}
+              disabled={!department}
+              className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-2 text-xs font-medium text-slate-400 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Skip sign-in (dev only)
+            </button>
+          )}
 
           {/* Firebase config warning */}
           {!hasFirebaseConfig && (
