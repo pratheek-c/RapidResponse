@@ -1,94 +1,40 @@
-# RapidResponse.ai — Documentation
+# RapidResponse.ai Documentation
 
-**RapidResponse.ai** is a municipal-grade AI-powered 911 emergency dispatch platform. An AI voice agent (AWS Bedrock Nova Sonic 2) autonomously handles incoming emergency calls from a browser, triages callers using RAG-backed emergency protocols, classifies incidents, and surfaces live data to human dispatchers via a React dashboard.
+RapidResponse.ai is a Bun-based AI-assisted 911 dispatch platform using AWS Bedrock (Nova Sonic + Nova Lite), libSQL, LanceDB, and a React dashboard.
 
 ---
 
 ## Table of Contents
 
-- [Getting Started](#getting-started)
+- [Quick Start](#quick-start)
 - [Project Structure](#project-structure)
 - [Environment Variables](#environment-variables)
-- [Running the Application](#running-the-application)
 - [Database Setup](#database-setup)
 - [Seeding Sample Data](#seeding-sample-data)
-- [Ingesting Protocol Documents](#ingesting-protocol-documents)
-- [Running Tests](#running-tests)
+- [Protocol Ingestion](#protocol-ingestion)
+- [Testing](#testing)
 - [Further Reading](#further-reading)
 
 ---
 
-## Getting Started
-
-### Prerequisites
-
-| Requirement | Version |
-|---|---|
-| [Bun](https://bun.sh) | >= 1.1 |
-| AWS account | IAM credentials with Bedrock + S3 access |
-| AWS Bedrock model access | Nova Sonic 2, Titan Embeddings v2 (must be enabled in your AWS region) |
-
-> **Important:** This project uses **Bun** as the JavaScript/TypeScript runtime. Do not use `npm`, `npx`, `yarn`, `pnpm`, `ts-node`, or `tsx` for any operation.
-
-### 1. Clone and install
+## Quick Start
 
 ```bash
 git clone https://github.com/pratheek-c/RapidResponse.git
 cd RapidResponse
 bun install
-```
-
-### 2. Configure environment
-
-```bash
 cp .env.example .env
+bun run --filter backend db:migrate
 ```
 
-Open `.env` and fill in every value. See [Environment Variables](#environment-variables) for the full reference.
-
-### 3. Run database migrations
-
-```bash
-bun run db:migrate
-```
-
-This applies all numbered SQL migrations in `backend/src/db/migrations/` to the libSQL database file at `LIBSQL_URL` (defaults to `./data/rapidresponse.db`).
-
-### 4. (Optional) Seed sample data
-
-```bash
-bun run seed
-```
-
-Inserts 12 sample units and 4 sample incidents so the dashboard has data to display immediately.
-
-### 5. (Optional) Ingest protocol documents
-
-Place `.txt`, `.md`, or `.pdf` files in `backend/protocols/`, then:
-
-```bash
-bun run ingest:protocols
-```
-
-This chunks the documents, embeds them with Titan Embeddings v2, and stores them in LanceDB for RAG retrieval during calls.
-
-### 6. Start the backend
+Run apps:
 
 ```bash
 bun run dev:backend
-```
-
-The server starts on port `3000` by default (configurable via `PORT`).
-
-### 7. Start the frontend
-
-```bash
 bun run dev:frontend
 ```
 
-The Vite dev server starts on `http://localhost:5173`.
-
-Open `http://localhost:5173/dashboard` for the dispatcher dashboard, or `http://localhost:5173/` to simulate a 911 call.
+Dashboard: `http://localhost:5173/dashboard`
 
 ---
 
@@ -96,278 +42,168 @@ Open `http://localhost:5173/dashboard` for the dispatcher dashboard, or `http://
 
 ```
 rapidresponse/
-├── package.json              # Bun workspace root (workspaces: backend, frontend)
-├── bunfig.toml               # Bun config
-├── .env.example              # Environment variable template
-├── .gitignore
-├── docs/                     # This documentation
+├── README.md
+├── docs/
+│   ├── index.md
+│   ├── architecture.md
+│   ├── api-reference.md
+│   └── frontend.md
 ├── backend/
-│   ├── package.json          # Backend dependencies
-│   ├── tsconfig.json
-│   ├── data/                 # Runtime data (gitignored)
-│   │   ├── rapidresponse.db  # libSQL embedded database
-│   │   └── lancedb/          # LanceDB vector store
-│   ├── protocols/            # Place .txt/.md/.pdf protocol docs here
+│   ├── package.json
 │   ├── scripts/
-│   │   ├── migrate.ts        # DB migration runner
-│   │   ├── seed.ts           # Sample data seed
-│   │   └── ingest.ts         # Protocol document ingestion
+│   │   ├── migrate.ts
+│   │   ├── seed.ts
+│   │   ├── seedDemo.ts
+│   │   └── ingest.ts
 │   └── src/
-│       ├── index.ts          # Server entry point
-│       ├── server.ts         # Bun.serve() HTTP + WebSocket server
-│       ├── config/
-│       │   └── env.ts        # Validated environment config
-│       ├── types/
-│       │   └── index.ts      # All shared TypeScript types
-│       ├── db/
-│       │   ├── libsql.ts     # libSQL client + typed CRUD helpers
-│       │   ├── lancedb.ts    # LanceDB connect + Arrow schemas
-│       │   └── migrations/   # Numbered SQL migration files
 │       ├── agents/
-│   │   ├── novaAgent.ts  # Nova Sonic bidirectional stream agent
-│   │   └── reportAgent.ts# Nova Lite report generation (every 30s)
+│       │   ├── novaAgent.ts
+│       │   ├── reportAgent.ts
+│       │   ├── dispatchBridgeAgent.ts
+│       │   └── triageAgent.ts
 │       ├── services/
+│       │   ├── incidentService.ts
+│       │   ├── dispatchService.ts
+│       │   ├── extractionService.ts
 │       │   ├── sseService.ts
 │       │   ├── storageService.ts
 │       │   ├── ragService.ts
-│       │   ├── incidentService.ts
-│       │   ├── transcriptionService.ts
-│       │   └── dispatchService.ts
+│       │   └── transcriptionService.ts
 │       ├── routes/
-│   │   ├── incidents.ts
-│   │   ├── units.ts
-│   │   ├── dispatch.ts
-│   │   ├── protocols.ts
-│   │   ├── recordings.ts
-│   │   ├── reportRoute.ts# GET /report/:incident_id (in-memory cache)
-│   │   └── mockRoute.ts  # GET /mock/dispatchers
-│       ├── ws/
-│       │   └── callHandler.ts
-│       └── __tests__/
+│       │   ├── incidents.ts
+│       │   ├── units.ts
+│       │   ├── dispatch.ts
+│       │   ├── reportRoute.ts
+│       │   ├── protocols.ts
+│       │   ├── recordings.ts
+│       │   └── mockRoute.ts
+│       ├── ws/callHandler.ts
+│       └── db/
+│           ├── libsql.ts
+│           ├── lancedb.ts
+│           └── migrations/
+│               ├── 001_initial.sql
+│               ├── 002_add_indexes.sql
+│               ├── 003_add_caller_address.sql
+│               ├── 004_dispatch_tables.sql
+│               ├── 005_fix_units_fk.sql
+│               └── 006_fix_transcription_dispatches_fk.sql
 └── frontend/
-    ├── package.json
-    ├── vite.config.ts
     └── src/
-        ├── App.tsx
-        ├── main.tsx
         ├── types/index.ts
         ├── hooks/
-        │   ├── useIncidents.ts
-        │   ├── useUnits.ts
+        │   ├── useCallerInfo.ts
         │   ├── useCallSocket.ts
-        │   └── useCallerInfo.ts    # GPS + Nominatim reverse geocode
+        │   ├── useIncidents.ts
+        │   └── useUnits.ts
         ├── components/
+        │   ├── Badges.tsx
+        │   ├── IncidentList.tsx
+        │   ├── IncidentDetail.tsx
+        │   └── UnitPanel.tsx
         └── pages/
+            ├── CallerView.tsx
+            └── DispatcherDashboard.tsx
 ```
 
 ---
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and fill in all values. The table below describes each variable.
+See `.env.example` for canonical values.
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `AWS_REGION` | Yes | — | AWS region, e.g. `us-east-1` |
-| `AWS_ACCESS_KEY_ID` | Yes | — | IAM access key |
-| `AWS_SECRET_ACCESS_KEY` | Yes | — | IAM secret key |
-| `BEDROCK_NOVA_SONIC_MODEL_ID` | Yes | — | Nova Sonic 2 model ID, e.g. `amazon.nova-2-sonic-v1:0` |
-| `BEDROCK_NOVA_LITE_MODEL_ID` | Yes | — | Nova Lite model ID for report generation, e.g. `amazon.nova-lite-v1:0` |
-| `BEDROCK_TITAN_EMBED_MODEL_ID` | Yes | — | Titan Embeddings v2 model ID, e.g. `amazon.titan-embed-text-v2:0` |
-| `S3_BUCKET_NAME` | Yes | — | S3 bucket for audio recordings and transcripts |
-| `LIBSQL_URL` | No | `file:./data/rapidresponse.db` | libSQL connection URL. Use `file:` for embedded, `http://localhost:8080` for networked sqld |
-| `LIBSQL_AUTH_TOKEN` | No | — | Auth token for networked sqld only |
-| `S3_RECORDINGS_PREFIX` | No | `recordings/` | S3 key prefix for audio and transcript files |
-| `LANCEDB_PATH` | No | `./data/lancedb` | Local filesystem path for LanceDB data directory |
-| `PORT` | No | `3000` | HTTP server port |
-| `FRONTEND_URL` | No | `http://localhost:5173` | Allowed CORS origin |
-| `DISPATCH_CITY` | No | `Springfield` | City name injected into the Nova Sonic system prompt |
-| `DISPATCH_DEPT` | No | `Springfield Emergency Services` | Department name injected into the Nova Sonic system prompt |
-
-### Required AWS IAM permissions
-
-The IAM user/role must have:
-
-```json
-{
-  "Effect": "Allow",
-  "Action": [
-    "bedrock:InvokeModel",
-    "bedrock:InvokeModelWithBidirectionalStream"
-  ],
-  "Resource": [
-    "arn:aws:bedrock:*::foundation-model/amazon.nova-2-sonic-v1:0",
-    "arn:aws:bedrock:*::foundation-model/amazon.nova-lite-v1:0",
-    "arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v2:0"
-  ]
-}
-```
-
-Plus S3 `GetObject`, `PutObject`, and `GetObjectPresignedUrl` on the recordings bucket.
-
----
-
-## Running the Application
-
-### Development (both servers)
-
-Run each in a separate terminal:
-
-```bash
-# Terminal 1 — backend
-bun run dev:backend
-
-# Terminal 2 — frontend
-bun run dev:frontend
-```
-
-### Production build
-
-```bash
-bun run build:frontend   # outputs to frontend/dist/
-```
-
-Serve `frontend/dist/` via any static file host (nginx, S3+CloudFront, etc.), pointing its API proxy at the backend server.
-
-### Available scripts (root)
-
-| Script | Command | Description |
-|---|---|---|
-| `dev:backend` | `bun run --filter backend dev` | Start backend in watch mode |
-| `dev:frontend` | `bun run --filter frontend dev` | Start Vite dev server |
-| `build:frontend` | `bun run --filter frontend build` | Production build |
-| `test` | `bun test` | Run all backend tests |
-| `test:backend` | `bun test --filter backend` | Backend tests only |
-
-### Available scripts (backend)
-
-Run from the `backend/` directory or with `bun run --filter backend <script>`:
-
-| Script | Description |
-|---|---|
-| `db:migrate` | Apply pending SQL migrations |
-| `seed` | Populate DB with sample units and incidents |
-| `ingest:protocols` | Chunk, embed and store protocol documents in LanceDB |
+Core variables include:
+- `AWS_REGION`
+- `BEDROCK_NOVA_SONIC_MODEL_ID`
+- `BEDROCK_NOVA_LITE_MODEL_ID`
+- `BEDROCK_TITAN_EMBED_MODEL_ID`
+- `LIBSQL_URL`
+- `S3_BUCKET_NAME`
+- `LANCEDB_PATH`
+- `PORT`
+- `FRONTEND_URL`
 
 ---
 
 ## Database Setup
 
-The backend uses two databases that serve different purposes:
-
-### libSQL (structured data)
-
-- Default: embedded SQLite file at `./data/rapidresponse.db` — no server required
-- Optional networked mode: run the open-source `sqld` server and set `LIBSQL_URL=http://localhost:8080`
-- Schema is managed with numbered migration files in `backend/src/db/migrations/`
-
 Run migrations:
 
 ```bash
-bun run db:migrate
+bun run --filter backend db:migrate
 ```
 
-#### Schema overview
+Migration order currently:
+
+1. `001_initial`
+2. `002_add_indexes`
+3. `003_add_caller_address`
+4. `004_dispatch_tables`
+5. `005_fix_units_fk`
+6. `006_fix_transcription_dispatches_fk`
+
+Schema overview:
 
 | Table | Purpose |
 |---|---|
-| `incidents` | Emergency incident records |
-| `transcription_turns` | Per-turn call transcript |
-| `units` | Emergency response units (EMS, fire, police, etc.) |
-| `dispatches` | Unit-to-incident dispatch records |
-| `schema_migrations` | Applied migration tracking |
-
-### LanceDB (vector store)
-
-- Embedded — no server required
-- Data directory: `LANCEDB_PATH` (default `./data/lancedb`)
-- Initialized automatically on first server startup via `initCollections()`
-
-#### Collections
-
-| Collection | Purpose |
-|---|---|
-| `protocols` | Chunked protocol documents for RAG retrieval |
-| `incidents_history` | Past incident summaries for pattern matching |
-| `locations` | Geocoded addresses with S2 cell IDs |
+| `incidents` | Core incident record + dispatch extension columns |
+| `transcription_turns` | Per-turn transcript storage |
+| `units` | Unit fleet state |
+| `dispatches` | Legacy dispatch lifecycle rows |
+| `dispatch_actions` | Dispatcher action audit log |
+| `incident_units` | Units assigned to incidents |
+| `dispatch_questions` | Dispatcher Q&A history |
+| `schema_migrations` | Migration tracking |
 
 ---
 
 ## Seeding Sample Data
 
-The seed script populates the database with realistic sample data for development and demos.
+Two seed options exist in backend scripts:
 
 ```bash
-bun run seed
+bun run --filter backend seed
+bun run --filter backend seed:demo
 ```
 
-This inserts:
-- **12 units**: EMS-1 through EMS-3, FD-1 through FD-3, PD-1 through PD-4, HZ-1, SAR-1
-- **4 incidents**: one resolved fire, one dispatched medical, one dispatched traffic accident, one active unclassified
-- **5 transcription turns** on the resolved fire incident
+Recommended for dashboard demos:
 
-Safe to run multiple times — existing seed units/incidents are cleared before re-insertion.
+```bash
+bun run --filter backend seed:demo
+```
+
+`seed:demo` includes realistic linked data across incidents, units, dispatches, transcript turns, incident_units, dispatch_actions, and dispatch_questions.
 
 ---
 
-## Ingesting Protocol Documents
+## Protocol Ingestion
 
-Protocol documents are used by Nova Sonic via RAG to provide callers with accurate pre-arrival instructions.
-
-1. Place `.txt`, `.md`, or `.pdf` files in `backend/protocols/`
-2. Run:
+Place docs in `backend/protocols/` and run:
 
 ```bash
-bun run ingest:protocols
+bun run --filter backend ingest:protocols
 ```
 
-### What the ingest script does
-
-1. Reads each supported file from `backend/protocols/`
-2. Splits text on section headers (Markdown `#`/`##` or ALL-CAPS lines) and by max 2048-character chunks with 200-character overlap
-3. Embeds each chunk using AWS Bedrock Titan Embeddings v2 (1024-dimension vectors)
-4. Upserts all chunks into the `protocols` LanceDB collection with fields: `id`, `source_file`, `section`, `chunk_text`, `priority_keywords`, `embedding`
-
-### Example protocol files
-
-```
-backend/protocols/
-├── cardiac-arrest.md
-├── structure-fire.txt
-├── hazmat-response.pdf
-└── trauma-protocol.md
-```
+This chunks content, embeds via Titan v2, and stores vectors in LanceDB `protocols`.
 
 ---
 
-## Running Tests
+## Testing
 
 ```bash
 bun test
 ```
 
-The test suite covers:
+Backend-only:
 
-| File | Tests | Coverage |
-|---|---|---|
-| `db.migrations.test.ts` | 17 | DB schema, CRUD helpers, migrations |
-| `services.test.ts` | 11 | SSE, storage, RAG, incidents, transcription, dispatch |
-| `novaAgent.test.ts` | 8 | Agent session options, tool specs, system prompt |
-| `routes.test.ts` | 9 | HTTP routes for incidents, units, dispatch, protocols, recordings |
-
-**Total: 45 tests, 0 failures**
-
-### Test design
-
-- Bedrock calls are mocked with `bun:mock`
-- libSQL uses in-memory databases (`createClient({ url: ":memory:" })`)
-- LanceDB uses a temporary directory (`/tmp/lancedb-test-{uuid}`) cleaned up after each test
-- S3 is mocked — no real AWS credentials required
+```bash
+bun test --filter backend
+```
 
 ---
 
 ## Further Reading
 
-- [API Reference](./api-reference.md) — all REST, WebSocket, and SSE endpoints
-- [Architecture](./architecture.md) — system design, data flow, service layer
-- [Frontend Guide](./frontend.md) — React pages, hooks, and components
+- `docs/architecture.md` - system architecture and storage model
+- `docs/api-reference.md` - REST, SSE, and WebSocket contracts
+- `docs/frontend.md` - frontend hooks/components and event handling
