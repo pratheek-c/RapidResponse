@@ -276,3 +276,79 @@ The following skills are available in `.opencode/skills/`. Load them when the re
 | `run-migrations.md` | User changes the DB schema, adds a column, or sets up a fresh environment |
 | `build-docker.md` | User wants to build the Docker image or push to AWS ECR |
 | `deploy-ecs.md` | User wants to deploy a new version to AWS ECS |
+
+
+ ---
+    backend/src/agents/novaAgent.ts
+
+    - encodeChunk: Wraps events as { chunk: { bytes: JSON.stringify({ event: { [eventType]: payload } }) } }
+    - turnDetectionConfiguration removed from sessionStart — not supported by amazon.nova-2-sonic-v1:0 (Nova 2 Sonic); caused "unexpected
+    error"
+    - toolConfiguration tools: Changed inputSchema.json back to JSON.stringify({...}) (JSON string, not object) — Nova Sonic bidirectional
+    stream requires doubly-encoded JSON string
+    - audioType: "SPEECH" kept in audioOutputConfiguration (confirmed correct per AWS Python examples)
+    - Text trigger added: USER text content "." with interactive: true before AUDIO content — makes Nova Sonic speak first ("911, what's your
+    emergency?")
+    - Silence approach removed: replaced with text trigger
+    - Transcript accumulation: uses currentTextBlock (stack-based) instead of Map, since response contentStart has no contentName
+    - Tool result format: role: "TOOL", toolStatus: "SUCCESS"/"ERROR", toolResultConfiguration: { toolUseId, toolStatus }
+    - System prompt: brief, empathetic, no formatting, 1-2 sentences per turn, handles interruptions
+    - Session renewal timer: 7m30s timeout
+
+    backend/src/agents/reportAgent.ts
+
+    - Conditional credentials: uses env vars if present, otherwise falls back to AWS profile
+
+    backend/src/services/ragService.ts
+
+    - Fixed TypeScript type: InvokeModelCommandOutput instead of Awaited<ReturnType<...>>
+    - Removed explicit credentials block (SDK auto-reads from env)
+
+    backend/src/services/storageService.ts
+
+    - Added followRegionRedirects: true to S3Client (bucket region mismatch fix)
+    - Conditional credentials pattern
+
+    backend/src/config/env.ts
+
+    - AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN made optional (string | undefined)
+    - AWS_PROFILE added as optional field
+    - Only AWS_REGION required
+
+    backend/src/server.ts
+
+    - Added idleTimeout: 255 to Bun.serve() — prevents SSE connections timing out at 10s default
+
+    backend/data/mock/dispatchers.json (created)
+
+    - Schema matches reportAgent.ts MockData type exactly
+    - Dispatchers: status: "on_duty", shift, role, certifications, assigned_zones, station: { desk, coords, address }
+    - Zones: bbox: { sw, ne }, risk_level, primary_units
+    - Hospitals: coords, trauma_level, ER_beds_available, helipad, specialties
+
+    backend/.env (symlink)
+
+    - backend/.env symlinked to project root .env so Bun finds credentials when run from backend/
+
+    frontend/src/hooks/useCallSocket.ts
+
+    - Replaced MediaRecorder (WebM/Opus) with ScriptProcessorNode for raw PCM 16kHz 16-bit mono — Nova Sonic requires LPCM
+    - Added AudioContext.resume() before playback (browser auto-suspend fix)
+    - Added stopCapture() helper for proper cleanup on call end
+
+    frontend/src/pages/CallerView.tsx
+
+    - Removed useEffect auto-arm — call only starts on "Call 911" button click
+    - Removed hasAutoArmed ref
+
+    .env.example
+
+    - Model IDs updated to cross-region inference profile format: us.amazon.nova-sonic-v1:0, us.amazon.nova-lite-v1:0,
+    us.amazon.titan-embed-text-v2:0
+
+    ---
+    Key discoveries:
+    - turnDetectionConfiguration is not supported by amazon.nova-2-sonic-v1:0
+    - Nova 2 Sonic requires text trigger ("." with interactive: true) to speak first — silence alone only returns usageEvent
+    - inputSchema.json in tool specs must be a JSON string (doubly encoded), not an object
+    - AWS sandbox in eu-north-1 uses amazon.nova-2-sonic-v1:0 directly (no cross-region inference profile needed)
