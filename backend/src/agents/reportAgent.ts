@@ -22,6 +22,7 @@ import type {
   DispatchedUnitSummary,
   DispatcherAssigned,
   ReportTimelineEvent,
+  DispatchAction,
 } from "../types/index.ts";
 import type { MockUnitWithDistance } from "../routes/units.ts";
 
@@ -347,4 +348,70 @@ Produce a JSON object with exactly these fields:
     status: ctx.status,
     generated_at: new Date().toISOString(),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Generate close summary for a resolved/completed incident
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a concise 2–3 sentence close summary for a resolved incident.
+ * Used by POST /dispatch/save-report before storing to the DB.
+ * Falls back to `officerNotes` (or a generic string) on any error.
+ */
+export async function generateCloseSummary(
+  transcript: { role: "caller" | "agent"; text: string }[],
+  dispatchActions: DispatchAction[],
+  officerNotes: string | undefined,
+  incidentType: IncidentType | null,
+  priority: IncidentPriority | null
+): Promise<string> {
+  const fallback = officerNotes ?? "Incident resolved.";
+
+  const callerLines = transcript
+    .filter((t) => t.role === "caller")
+    .slice(-15)
+    .map((t) => `CALLER: ${t.text}`)
+    .join("\n");
+
+  const actionsText = dispatchActions
+    .map((a) => `${a.action_type.toUpperCase()} at ${a.created_at}`)
+    .join("; ");
+
+  const prompt = `You are an emergency dispatch report writer.
+Write a concise 2-3 sentence close summary for a resolved incident.
+Do not fabricate details not present in the input.
+
+Incident type: ${incidentType ?? "unknown"}
+Priority: ${priority ?? "unknown"}
+Officer notes: ${officerNotes ?? "(none)"}
+Dispatch actions: ${actionsText || "(none recorded)"}
+Recent caller transcript:
+${callerLines || "(no transcript)"}
+
+Return ONLY the summary text — no labels, no markdown.`;
+
+  try {
+    const body: NovaLiteRequestBody = {
+      messages: [{ role: "user", content: [{ text: prompt }] }],
+      inferenceConfig: { maxTokens: 200, temperature: 0.2 },
+    };
+    const cmd = new InvokeModelCommand({
+      modelId: env.BEDROCK_NOVA_LITE_MODEL_ID,
+      contentType: "application/json",
+      accept: "application/json",
+      body: JSON.stringify(body),
+    });
+    const resp = await getClient().send(cmd);
+    const rawBody = new TextDecoder().decode(resp.body);
+    const parsed = JSON.parse(rawBody) as {
+      output?: { message?: { content?: { text?: string }[] } };
+    };
+    const text = (parsed.output?.message?.content?.[0]?.text ?? "").trim();
+    if (text.length > 0) return text;
+    return fallback;
+  } catch (err) {
+    console.error("[reportAgent] generateCloseSummary failed:", err instanceof Error ? err.message : String(err));
+    return fallback;
+  }
 }

@@ -1,20 +1,21 @@
 /**
  * Incidents REST routes.
  *
- * GET  /incidents          List incidents (optional ?status=active&limit=50&offset=0)
- * GET  /incidents/:id      Get a single incident
- * PATCH /incidents/:id     Update an incident (status, summary, etc.)
+ * GET  /incidents            List incidents (optional ?status=active&limit=50&offset=0)
+ * GET  /incidents/resolved   List resolved/completed incidents (shorthand)
+ * GET  /incidents/:id        Get a single incident
+ * PATCH /incidents/:id       Update an incident (status, summary, etc.)
  */
 
 import { getIncident, listIncidents, updateIncident } from "../services/incidentService.ts";
-import { dbGetTranscription } from "../db/libsql.ts";
+import { dbGetTranscription, dbGetDispatchActions, dbGetDispatchQuestions } from "../db/libsql.ts";
 import { getDb } from "../db/libsql.ts";
 import type { UpdateIncidentInput } from "../types/index.ts";
 
 export async function handleIncidents(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const pathParts = url.pathname.replace(/^\//, "").split("/");
-  // pathParts[0] = "incidents", pathParts[1] = optional id
+  // pathParts[0] = "incidents", pathParts[1] = optional id or "resolved"
 
   if (pathParts.length === 1) {
     // /incidents
@@ -36,12 +37,54 @@ export async function handleIncidents(req: Request): Promise<Response> {
   const id = pathParts[1];
   if (!id) return badRequest("Missing incident ID");
 
+  // GET /incidents/resolved — must be checked before /:id
+  if (id === "resolved" && req.method === "GET") {
+    const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
+    const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
+    try {
+      // Return both "resolved" and "completed" incidents
+      const [resolved, completed] = await Promise.all([
+        listIncidents({ status: "resolved", limit, offset }),
+        listIncidents({ status: "completed", limit, offset }),
+      ]);
+      // Merge and sort by updated_at descending
+      const all = [...resolved, ...completed].sort(
+        (a, b) => (b.updated_at > a.updated_at ? 1 : -1)
+      );
+      return json({ ok: true, data: all });
+    } catch (err) {
+      return jsonError(err, 500);
+    }
+  }
+
   // /incidents/:id/transcript
   if (pathParts[2] === "transcript") {
     if (req.method !== "GET") return notAllowed();
     try {
       const turns = await dbGetTranscription(getDb(), id);
       return json({ ok: true, data: turns });
+    } catch (err) {
+      return jsonError(err, 500);
+    }
+  }
+
+  // /incidents/:id/actions
+  if (pathParts[2] === "actions") {
+    if (req.method !== "GET") return notAllowed();
+    try {
+      const actions = await dbGetDispatchActions(getDb(), id);
+      return json({ ok: true, data: actions });
+    } catch (err) {
+      return jsonError(err, 500);
+    }
+  }
+
+  // /incidents/:id/questions
+  if (pathParts[2] === "questions") {
+    if (req.method !== "GET") return notAllowed();
+    try {
+      const questions = await dbGetDispatchQuestions(getDb(), id);
+      return json({ ok: true, data: questions });
     } catch (err) {
       return jsonError(err, 500);
     }

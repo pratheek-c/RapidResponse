@@ -26,10 +26,19 @@ import type {
 import { createIncident, updateIncident } from "../services/incidentService.ts";
 import { saveAgentTurn, saveCallerTurn, exportTranscript } from "../services/transcriptionService.ts";
 import { uploadTranscript, uploadAudioChunk } from "../services/storageService.ts";
-import { startNovaSession, type NovaSession, type AvailableUnitSummary } from "../agents/novaAgent.ts";
+import {
+  startNovaSession,
+  registerSession,
+  deregisterSession,
+  type NovaSession,
+  type AvailableUnitSummary,
+} from "../agents/novaAgent.ts";
 import { generateReport, assignDispatcher, type MockData } from "../agents/reportAgent.ts";
 import { cacheReport, evictReport } from "../routes/reportRoute.ts";
 import type { MockUnitWithDistance } from "../routes/units.ts";
+import { maybeExtract, cancelExtraction, getExtraction } from "../services/extractionService.ts";
+import { evaluateEscalation } from "../agents/triageAgent.ts";
+import { pushSSE } from "../services/sseService.ts";
 
 // ---------------------------------------------------------------------------
 // Per-connection state
@@ -226,6 +235,17 @@ async function handleCallStart(
           }
           sendMsg(ws, { type: "transcript_update", role, text });
 
+          // Push transcript SSE to dispatcher dashboard
+          pushSSE({
+            type: "transcript_update",
+            data: {
+              incident_id,
+              role: role === "agent" ? "ai" : "caller",
+              text,
+              timestamp: new Date().toISOString(),
+            },
+          });
+
           // Accumulate transcript in call state for report agent
           if (state.current) {
             state.current.transcript.push({
@@ -238,12 +258,42 @@ async function handleCallStart(
             });
             state.current.transcriptTurnsSinceLastReport += 1;
 
+            // Trigger 3-second debounced extraction after each AI turn
+            if (role === "agent") {
+              const simplifiedTranscript = state.current.transcript.map((t) => ({
+                role: t.role,
+                text: t.text,
+              }));
+              maybeExtract(incident_id, simplifiedTranscript);
+            }
+
             // Trigger report after every 5 new transcript turns
             if (state.current.transcriptTurnsSinceLastReport >= 5) {
               state.current.transcriptTurnsSinceLastReport = 0;
               triggerReportUpdate(ws, state.current).catch((err: unknown) => {
                 console.error("[report] transcript-triggered report failed:", err);
               });
+            }
+
+            // Evaluate escalation need after each caller turn
+            if (role === "caller" && state.current.incidentPriority) {
+              const extraction = getExtraction(incident_id);
+              const suggestion = evaluateEscalation(
+                state.current.transcript.map((t) => ({ role: t.role, text: t.text })),
+                extraction,
+                state.current.incidentPriority,
+                [] // dispatched dept types — empty for now; full wiring needs unit type lookup
+              );
+              if (suggestion) {
+                pushSSE({
+                  type: "escalation_suggestion",
+                  data: {
+                    incident_id,
+                    reason: suggestion.reason,
+                    suggested_units: suggestion.suggested_units,
+                  },
+                });
+              }
             }
           }
         },
@@ -279,6 +329,9 @@ async function handleCallStart(
     });
     return;
   }
+
+  // Register session for dispatcher injection
+  registerSession(incident_id, session);
 
   state.current = {
     incident_id,
@@ -346,6 +399,10 @@ async function finalizeCallById(
   ws: BunServerWebSocket,
   incident_id: string
 ): Promise<void> {
+  // Remove from session registry + cancel any pending extraction
+  deregisterSession(incident_id);
+  cancelExtraction(incident_id);
+
   try {
     // Export transcript to S3
     const transcriptData = await exportTranscript(incident_id);

@@ -9,7 +9,8 @@
     "test": "bun test",
     "db:migrate": "bun run scripts/migrate.ts",
     "ingest:protocols": "bun run scripts/ingest.ts",
-    "seed": "bun run scripts/seed.ts"
+    "seed": "bun run scripts/seed.ts",
+    "seed:demo": "bun run scripts/seedDemo.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1009.0",

@@ -70,6 +70,43 @@ export type AvailableUnitSummary = {
 };
 
 // ---------------------------------------------------------------------------
+// Active session registry
+// ---------------------------------------------------------------------------
+
+/**
+ * Map of incident_id → active NovaSession.
+ * Allows dispatch routes to inject text into an ongoing call.
+ */
+const activeSessions = new Map<string, NovaSession>();
+
+export function registerSession(incident_id: string, session: NovaSession): void {
+  activeSessions.set(incident_id, session);
+}
+
+export function deregisterSession(incident_id: string): void {
+  activeSessions.delete(incident_id);
+}
+
+export function getActiveSession(incident_id: string): NovaSession | null {
+  return activeSessions.get(incident_id) ?? null;
+}
+
+/**
+ * Inject a dispatcher text message into an active Nova Sonic session.
+ * The text is sent as a USER turn so Nova Sonic can relay it to the caller.
+ * Returns true if the session was found and the injection queued.
+ */
+export async function injectTextIntoSession(
+  incident_id: string,
+  text: string
+): Promise<boolean> {
+  const session = activeSessions.get(incident_id);
+  if (!session) return false;
+  await session.injectText(text);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Tool schemas (sent in promptStart)
 // ---------------------------------------------------------------------------
 
@@ -211,6 +248,8 @@ Your job:
 export type NovaSession = {
   /** Send a base64-encoded PCM audio frame from the caller to Nova Sonic. */
   sendAudio: (base64Pcm: string) => Promise<void>;
+  /** Inject a dispatcher text turn into the active session. */
+  injectText: (text: string) => Promise<void>;
   /** End the session cleanly. */
   close: () => Promise<void>;
 };
@@ -471,6 +510,28 @@ export async function startNovaSession(
           content: base64Pcm,
         })
       );
+    },
+
+    async injectText(text: string) {
+      if (sessionClosed || !streamWriter) return;
+      const injectContentName = crypto.randomUUID();
+      await streamWriter(encodeChunk("contentStart", {
+        promptName,
+        contentName: injectContentName,
+        type: "TEXT",
+        interactive: true,
+        role: "USER",
+        textInputConfiguration: { mediaType: "text/plain" },
+      }));
+      await streamWriter(encodeChunk("textInput", {
+        promptName,
+        contentName: injectContentName,
+        content: text,
+      }));
+      await streamWriter(encodeChunk("contentEnd", {
+        promptName,
+        contentName: injectContentName,
+      }));
     },
 
     async close() {
