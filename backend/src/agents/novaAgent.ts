@@ -284,12 +284,9 @@ export async function startNovaSession(
         topP: 0.9,
         temperature: 0.7,
       },
-      turnDetectionConfiguration: {
-        endpointingSensitivity: "HIGH",
-      },
     });
 
-    // 2. promptStart
+    // 2. promptStart — tools omitted for debugging; add back once session connects
     yield encodeChunk("promptStart", {
       promptName,
       textOutputConfiguration: { mediaType: "text/plain" },
@@ -301,9 +298,6 @@ export async function startNovaSession(
         voiceId: "tiffany",
         encoding: "base64",
         audioType: "SPEECH",
-      },
-      toolConfiguration: {
-        tools: TOOL_SPECS,
       },
     });
 
@@ -330,7 +324,27 @@ export async function startNovaSession(
       contentName: systemContentName,
     });
 
-    // 6. contentStart (AUDIO)
+    // 6. USER text trigger — makes Nova Sonic respond with the opening greeting
+    const triggerContentName = crypto.randomUUID();
+    yield encodeChunk("contentStart", {
+      promptName,
+      contentName: triggerContentName,
+      type: "TEXT",
+      interactive: true,
+      role: "USER",
+      textInputConfiguration: { mediaType: "text/plain" },
+    });
+    yield encodeChunk("textInput", {
+      promptName,
+      contentName: triggerContentName,
+      content: ".",
+    });
+    yield encodeChunk("contentEnd", {
+      promptName,
+      contentName: triggerContentName,
+    });
+
+    // 7. contentStart (AUDIO)
     yield encodeChunk("contentStart", {
       promptName,
       contentName: audioContentName,
@@ -411,6 +425,12 @@ export async function startNovaSession(
 
       for await (const event of response.body) {
         if (sessionClosed) break;
+        // Debug: log raw event keys to diagnose format issues
+        try {
+          const raw = event as Record<string, unknown>;
+          const evKeys = Object.keys(("event" in raw ? raw["event"] : raw) as object);
+          console.log("[nova] ev keys:", evKeys);
+        } catch { /* ignore */ }
         await handleOutputEvent(event, {
           incident_id,
           callbacks,
