@@ -19,8 +19,10 @@ function optionalEnv(key: string, defaultValue: string): string {
 export type Env = {
   // AWS
   AWS_REGION: string;
-  AWS_ACCESS_KEY_ID: string;
-  AWS_SECRET_ACCESS_KEY: string;
+  AWS_PROFILE: string | undefined;
+  AWS_ACCESS_KEY_ID: string | undefined;
+  AWS_SECRET_ACCESS_KEY: string | undefined;
+  AWS_SESSION_TOKEN: string | undefined;
 
   // Bedrock model IDs
   BEDROCK_NOVA_SONIC_MODEL_ID: string;
@@ -50,8 +52,10 @@ export type Env = {
 function loadEnv(): Env {
   return {
     AWS_REGION: requireEnv("AWS_REGION"),
-    AWS_ACCESS_KEY_ID: requireEnv("AWS_ACCESS_KEY_ID"),
-    AWS_SECRET_ACCESS_KEY: requireEnv("AWS_SECRET_ACCESS_KEY"),
+    AWS_PROFILE: process.env["AWS_PROFILE"],
+    AWS_ACCESS_KEY_ID: process.env["AWS_ACCESS_KEY_ID"],
+    AWS_SECRET_ACCESS_KEY: process.env["AWS_SECRET_ACCESS_KEY"],
+    AWS_SESSION_TOKEN: process.env["AWS_SESSION_TOKEN"],
 
     BEDROCK_NOVA_SONIC_MODEL_ID: requireEnv("BEDROCK_NOVA_SONIC_MODEL_ID"),
     BEDROCK_NOVA_LITE_MODEL_ID: optionalEnv("BEDROCK_NOVA_LITE_MODEL_ID", "amazon.nova-lite-v1:0"),

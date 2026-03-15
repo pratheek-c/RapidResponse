@@ -13,19 +13,15 @@
  *   Input:  PCM 16-bit, 16kHz, mono, base64-encoded ("audio/lpcm")
  *   Output: PCM 16-bit, 24kHz, mono, base64-encoded ("audio/lpcm")
  *
- * Tool result timing:
- *   Send tool result on contentEnd with stopReason: "TOOL_USE" —
- *   NOT on the toolUse event itself.
- *
- * Event naming:
- *   Every event carries promptName UUID.
- *   Content blocks carry their own contentName UUID.
+ * Node.js SDK (v3) Binary Format:
+ *   The InvokeModelWithBidirectionalStreamCommand body must yield chunks of type:
+ *   { chunk: { bytes: Uint8Array } }
+ *   where bytes is the JSON.stringify of { event: { <eventType>: { ... } } }
  */
 
 import {
   BedrockRuntimeClient,
   InvokeModelWithBidirectionalStreamCommand,
-  type InvokeModelWithBidirectionalStreamInput,
 } from "@aws-sdk/client-bedrock-runtime";
 import { NodeHttp2Handler } from "@smithy/node-http-handler";
 import { env } from "../config/env.ts";
@@ -57,8 +53,8 @@ export type NovaSessionOptions = {
   incident_id: string;
   caller_location: string;
   caller_address?: string;
-  protocol_context: string; // RAG-retrieved protocol text, injected into system prompt
-  available_units?: AvailableUnitSummary[]; // nearby units sorted by distance
+  protocol_context: string;
+  available_units?: AvailableUnitSummary[];
   callbacks: NovaSessionCallbacks;
 };
 
@@ -173,34 +169,39 @@ function buildSystemPrompt(
           .join("\n")}\n[END AVAILABLE UNITS]`
       : "";
 
-  return `You are an AI-powered 911 emergency dispatcher for ${env.DISPATCH_DEPT} in ${env.DISPATCH_CITY}.
-
-Your role is to:
-1. Calmly and professionally handle emergency calls
-2. Gather essential information: nature of emergency, exact location, caller safety
-3. Classify the incident type and priority using the classify_incident tool
-4. Look up relevant response protocols using the get_protocol tool when needed
-5. Request dispatch of appropriate units using the dispatch_unit tool — choose the closest available unit of the right type
-6. Keep the caller calm and provide pre-arrival instructions based on protocol guidance
+  return `You are a highly efficient, empathetic human agent handling a live 911 emergency call for ${env.DISPATCH_DEPT} in ${env.DISPATCH_CITY}. You are speaking to the caller over a real-time audio connection.
 
 Current call context:
 - Incident ID: ${incident_id}
 ${locationLine}
-- City/Department: ${env.DISPATCH_CITY} / ${env.DISPATCH_DEPT}
+- Department: ${env.DISPATCH_DEPT}
 ${unitsBlock}
 
 [PROTOCOL CONTEXT]
 ${protocol_context}
 [END PROTOCOL CONTEXT]
 
-Guidelines:
-- Always start by saying "911, what is your emergency?"
-- Confirm the location early in the call
-- Ask about injuries and immediate dangers
-- Stay on the line with the caller
-- Use plain, clear language — no jargon
-- When dispatching, choose the closest available unit of the appropriate type
-- If the caller is in immediate danger, prioritize safety over information gathering`;
+Conversational rules you must strictly follow:
+
+Extreme Brevity: Keep every response to 1 or 2 short sentences. Never give long monologues. Ask one question at a time and pause for the caller to respond.
+
+No Formatting: You are generating speech. Never use bullet points, asterisks, numbering, emojis, or any markdown. Use only plain words and standard punctuation.
+
+Natural Phrasing: Use conversational fillers naturally when appropriate, such as "Got it," "Okay," "Understood," or "Alright."
+
+Numbers and Symbols: Spell out all symbols. Say "dollars" not "$". Read numbers conversationally, say "twenty-four hundred" not "2400".
+
+Interruptions: The caller may interrupt you mid-sentence. If they do, immediately stop and address what they said. Never mention that you were interrupted. Seamlessly continue the conversation on the new topic.
+
+Tone: Warm, calm, professional, and quick. Never robotic or overly formal. You are a real person helping someone in crisis.
+
+Your job:
+- Open with exactly: "911, what's your emergency?"
+- Gather: nature of emergency, exact location, caller safety, injuries
+- Use classify_incident once you know enough
+- Use get_protocol when you need guidance on what to tell the caller
+- Use dispatch_unit to send the right unit — pick the closest available one
+- Keep the caller on the line and give short pre-arrival instructions based on protocol`;
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +216,17 @@ export type NovaSession = {
 };
 
 /**
+ * Encode an event into the binary format required by the Node.js SDK command body.
+ */
+function encodeChunk(eventType: string, payload: Record<string, unknown>): { chunk: { bytes: Uint8Array } } {
+  return {
+    chunk: {
+      bytes: new TextEncoder().encode(JSON.stringify({ event: { [eventType]: payload } })),
+    },
+  };
+}
+
+/**
  * Open a Nova Sonic bidirectional stream and return controls.
  * Uses NodeHttp2Handler — Nova Sonic requires HTTP/2.
  */
@@ -225,10 +237,15 @@ export async function startNovaSession(
 
   const client = new BedrockRuntimeClient({
     region: env.AWS_REGION,
-    credentials: {
-      accessKeyId: env.AWS_ACCESS_KEY_ID,
-      secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
-    },
+    ...(env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY
+      ? {
+          credentials: {
+            accessKeyId: env.AWS_ACCESS_KEY_ID,
+            secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+            ...(env.AWS_SESSION_TOKEN ? { sessionToken: env.AWS_SESSION_TOKEN } : {}),
+          },
+        }
+      : {}),
     requestHandler: new NodeHttp2Handler({
       requestTimeout: 480000, // 8 minutes
       sessionTimeout: 480000,
@@ -240,117 +257,157 @@ export async function startNovaSession(
   let streamWriter: ((event: unknown) => Promise<void>) | null = null;
   let sessionClosed = false;
 
-  // Session renewal timer — renew at 7m30s
   const RENEWAL_MS = 7 * 60 * 1000 + 30 * 1000;
   const renewalTimer = setTimeout(() => {
     callbacks.onEnd("session_renewal");
   }, RENEWAL_MS);
 
-  // Tool result state — accumulated until contentEnd with TOOL_USE
   let pendingToolUseId: string | null = null;
   let pendingToolName: string | null = null;
   let pendingToolInput: string = "";
 
-  const promptName = crypto.randomUUID();
-  const systemPrompt = buildSystemPrompt(incident_id, caller_location, protocol_context, caller_address, available_units);
+  // Accumulate text per content block to avoid emitting duplicates
+  // Current text block being accumulated from response events
+  // (response contentStart has no contentName, so we track the active block)
+  let currentTextBlock: { role: "caller" | "agent"; text: string } | null = null;
 
-  // Build the async iterable for the bidirectional stream input
+  const promptName = crypto.randomUUID();
+  const systemContentName = crypto.randomUUID(); 
+  const audioContentName = crypto.randomUUID();  
+  const systemPromptText = buildSystemPrompt(incident_id, caller_location, protocol_context, caller_address, available_units);
+
   async function* buildInputStream() {
     // 1. sessionStart
-    yield {
-      sessionStart: {
-        inferenceConfiguration: {
-          maxTokens: 1024,
-          topP: 0.9,
-          temperature: 0.7,
-        },
+    yield encodeChunk("sessionStart", {
+      inferenceConfiguration: {
+        maxTokens: 1024,
+        topP: 0.9,
+        temperature: 0.7,
       },
-    };
-
-    // 2. promptStart with system prompt + tool specs
-    yield {
-      promptStart: {
-        promptName,
-        textOutputConfiguration: { mediaType: "text/plain" },
-        audioOutputConfiguration: {
-          mediaType: "audio/lpcm",
-          sampleRateHertz: 24000,
-          sampleSizeBits: 16,
-          channelCount: 1,
-          voiceId: "tiffany",
-          encoding: "base64",
-        },
-        audioInputConfiguration: {
-          mediaType: "audio/lpcm",
-          sampleRateHertz: 16000,
-          sampleSizeBits: 16,
-          channelCount: 1,
-          encoding: "base64",
-        },
-        systemPrompt: {
-          text: systemPrompt,
-        },
-        toolConfiguration: {
-          tools: TOOL_SPECS,
-        },
+      turnDetectionConfiguration: {
+        endpointingSensitivity: "HIGH",
       },
-    };
+    });
 
-    // 3. contentBlockStart for audio input
-    const audioContentName = crypto.randomUUID();
-    yield {
-      contentBlockStart: {
-        promptName,
-        contentName: audioContentName,
-        type: "AUDIO",
+    // 2. promptStart
+    yield encodeChunk("promptStart", {
+      promptName,
+      textOutputConfiguration: { mediaType: "text/plain" },
+      audioOutputConfiguration: {
+        mediaType: "audio/lpcm",
+        sampleRateHertz: 24000,
+        sampleSizeBits: 16,
+        channelCount: 1,
+        voiceId: "tiffany",
+        encoding: "base64",
+        audioType: "SPEECH",
       },
-    };
+      toolConfiguration: {
+        tools: TOOL_SPECS,
+      },
+    });
 
-    // 4. Stream caller audio frames from the queue
+    // 3. contentStart (SYSTEM)
+    yield encodeChunk("contentStart", {
+      promptName,
+      contentName: systemContentName,
+      type: "TEXT",
+      interactive: false,
+      role: "SYSTEM",
+      textInputConfiguration: { mediaType: "text/plain" },
+    });
+
+    // 4. textInput
+    yield encodeChunk("textInput", {
+      promptName,
+      contentName: systemContentName,
+      content: systemPromptText,
+    });
+
+    // 5. contentEnd
+    yield encodeChunk("contentEnd", {
+      promptName,
+      contentName: systemContentName,
+    });
+
+    // 6. contentStart (AUDIO)
+    yield encodeChunk("contentStart", {
+      promptName,
+      contentName: audioContentName,
+      type: "AUDIO",
+      interactive: true,
+      role: "USER",
+      audioInputConfiguration: {
+        mediaType: "audio/lpcm",
+        sampleRateHertz: 16000,
+        sampleSizeBits: 16,
+        channelCount: 1,
+        audioType: "SPEECH",
+        encoding: "base64",
+      },
+    });
+
     streamWriter = async (event: unknown) => {
       eventQueue.push(event);
     };
+
+    // Send 300ms of silence to prime the audio stream so Nova Sonic detects
+    // turn start and produces the opening greeting from the system prompt.
+    // 300ms @ 16kHz 16-bit mono = 9600 bytes
+    {
+      const PRIME_BYTES = 9600;
+      const silence = new Uint8Array(PRIME_BYTES);
+      let bin = "";
+      for (let j = 0; j < silence.length; j++) bin += String.fromCharCode(silence[j]);
+      eventQueue.push(encodeChunk("audioInput", {
+        promptName,
+        contentName: audioContentName,
+        content: btoa(bin),
+      }));
+    }
 
     while (!sessionClosed) {
       if (eventQueue.length > 0) {
         const event = eventQueue.shift();
         yield event;
       } else {
-        // Yield a small delay to avoid busy-waiting
         await Bun.sleep(10);
       }
     }
 
-    // 5. End the audio content block
-    yield {
-      contentBlockEnd: {
-        promptName,
-        contentName: audioContentName,
-      },
-    };
+    // 8. contentEnd
+    yield encodeChunk("contentEnd", {
+      promptName,
+      contentName: audioContentName,
+    });
 
-    // 6. End the prompt
-    yield {
-      promptEnd: {
-        promptName,
-      },
-    };
+    // 9. promptEnd
+    yield encodeChunk("promptEnd", {
+      promptName,
+    });
 
-    // 7. End the session
-    yield {
-      sessionEnd: {},
-    };
+    // 10. sessionEnd
+    yield encodeChunk("sessionEnd", {});
   }
 
   const command = new InvokeModelWithBidirectionalStreamCommand({
     modelId: env.BEDROCK_NOVA_SONIC_MODEL_ID,
-    body: buildInputStream() as InvokeModelWithBidirectionalStreamInput["body"],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    body: buildInputStream() as any,
   });
 
-  // Start the stream and process responses
   (async () => {
     try {
       const response = await client.send(command);
+
+      if (
+        !response.body ||
+        typeof (response.body as unknown as AsyncIterable<unknown>)[Symbol.asyncIterator] !== "function"
+      ) {
+        throw new Error(
+          `Nova Sonic response.body is not iterable — raw: ${JSON.stringify(response.body)}`
+        );
+      }
 
       for await (const event of response.body) {
         if (sessionClosed) break;
@@ -358,21 +415,25 @@ export async function startNovaSession(
           incident_id,
           callbacks,
           pendingToolUseId: { get: () => pendingToolUseId, set: (v) => { pendingToolUseId = v; } },
-          pendingToolName: { get: () => pendingToolName, set: (v) => { pendingToolName = v; } },
+          pendingToolName:  { get: () => pendingToolName,  set: (v) => { pendingToolName = v; } },
           pendingToolInput: { get: () => pendingToolInput, set: (v) => { pendingToolInput = v; } },
-          sendEvent: async (event: unknown) => {
-            if (streamWriter) await streamWriter(event);
+          currentTextBlock: { get: () => currentTextBlock, set: (v) => { currentTextBlock = v; } },
+          sendChunk: async (eventType: string, payload: Record<string, unknown>) => {
+            if (streamWriter) await streamWriter(encodeChunk(eventType, payload));
           },
           promptName,
+          audioContentName,
         });
       }
 
       callbacks.onEnd("stream_complete");
     } catch (err) {
       if (!sessionClosed) {
-        callbacks.onError(
-          err instanceof Error ? err : new Error(String(err))
-        );
+        const msg = err instanceof Error
+          ? err.message
+          : (typeof err === "object" ? JSON.stringify(err, Object.getOwnPropertyNames(err as object)) : String(err));
+        console.error("[nova] stream error detail:", msg);
+        callbacks.onError(new Error(msg));
       }
     } finally {
       clearTimeout(renewalTimer);
@@ -383,13 +444,13 @@ export async function startNovaSession(
   return {
     async sendAudio(base64Pcm: string) {
       if (sessionClosed || !streamWriter) return;
-      await streamWriter({
-        audioInput: {
+      await streamWriter(
+        encodeChunk("audioInput", {
           promptName,
-          contentName: crypto.randomUUID(),
+          contentName: audioContentName,
           content: base64Pcm,
-        },
-      });
+        })
+      );
     },
 
     async close() {
@@ -421,42 +482,65 @@ async function handleOutputEvent(
     pendingToolUseId: ToolRef;
     pendingToolName: ToolRef;
     pendingToolInput: ToolInputRef;
-    sendEvent: (event: unknown) => Promise<void>;
+    currentTextBlock: { get: () => { role: "caller" | "agent"; text: string } | null; set: (v: { role: "caller" | "agent"; text: string } | null) => void };
+    sendChunk: (eventType: string, payload: Record<string, unknown>) => Promise<void>;
     promptName: string;
+    audioContentName: string;
   }
 ): Promise<void> {
-  const ev = event as Record<string, unknown>;
+  let ev: Record<string, unknown>;
 
-  // Audio output
+  if (
+    event &&
+    typeof event === "object" &&
+    "chunk" in (event as Record<string, unknown>)
+  ) {
+    const chunk = (event as Record<string, unknown>)["chunk"] as Record<string, unknown>;
+    const bytes = chunk["bytes"] as Uint8Array | undefined;
+    if (!bytes) return;
+    try {
+      const parsed = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+      ev = ("event" in parsed ? parsed["event"] : parsed) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+  } else {
+    const raw = event as Record<string, unknown>;
+    ev = ("event" in raw ? raw["event"] : raw) as Record<string, unknown>;
+  }
+
   if (ev["audioOutput"]) {
     const audio = ev["audioOutput"] as Record<string, unknown>;
-    // If the previous textOutput had interrupted:true, we should have flushed
-    // (barge-in handled below). Here just forward the audio.
+    if (audio["interrupted"] === true) {
+      ctx.callbacks.onAudioOutput("__FLUSH__");
+      return;
+    }
     ctx.callbacks.onAudioOutput(audio["content"] as string);
     return;
   }
 
-  // Text output (transcript + barge-in detection)
-  if (ev["textOutput"]) {
-    const text = ev["textOutput"] as Record<string, unknown>;
-    const content = text["content"] as string;
-
-    // Barge-in: caller interrupted the agent
-    if (text["interrupted"] === true) {
-      // Signal caller to flush audio queue — we do this by sending an empty
-      // onAudioOutput with a sentinel value the caller handler can detect.
-      // The actual audio queue flush happens in callHandler.ts.
-      ctx.callbacks.onAudioOutput("__FLUSH__");
-      return;
-    }
-
-    if (content) {
-      ctx.callbacks.onTranscript("agent", content);
+  // contentStart — start a new text accumulation block
+  if (ev["contentStart"]) {
+    const cs = ev["contentStart"] as Record<string, unknown>;
+    const rawRole = (cs["role"] as string | undefined)?.toUpperCase();
+    if (rawRole === "USER" || rawRole === "ASSISTANT") {
+      const role: "caller" | "agent" = rawRole === "USER" ? "caller" : "agent";
+      ctx.currentTextBlock.set({ role, text: "" });
     }
     return;
   }
 
-  // Tool use — accumulate until contentEnd with TOOL_USE stopReason
+  // textOutput — accumulate into the active block
+  if (ev["textOutput"]) {
+    const text = ev["textOutput"] as Record<string, unknown>;
+    const content = (text["content"] as string) ?? "";
+    const block = ctx.currentTextBlock.get();
+    if (block && content) {
+      block.text += content;
+    }
+    return;
+  }
+
   if (ev["toolUse"]) {
     const tool = ev["toolUse"] as Record<string, unknown>;
     ctx.pendingToolUseId.set(tool["toolUseId"] as string);
@@ -465,23 +549,24 @@ async function handleOutputEvent(
     return;
   }
 
-  // Tool input delta (streamed JSON input)
   if (ev["toolInputDelta"]) {
     const delta = ev["toolInputDelta"] as Record<string, unknown>;
     ctx.pendingToolInput.set(
-      ctx.pendingToolInput.get() + (delta["delta"] as string ?? "")
+      ctx.pendingToolInput.get() + ((delta["delta"] as string) ?? "")
     );
-    return;
-  }
-
-  // Content end — if TOOL_USE, execute tool and send result
-  if (ev["contentBlockDelta"]) {
-    // Ignore — tool input comes via toolInputDelta
     return;
   }
 
   if (ev["contentEnd"]) {
     const end = ev["contentEnd"] as Record<string, unknown>;
+    const contentName = end["contentName"] as string | undefined;
+
+    // Emit accumulated text block
+    const block = ctx.currentTextBlock.get();
+    if (block && block.text.trim()) {
+      ctx.currentTextBlock.set(null);
+      ctx.callbacks.onTranscript(block.role, block.text.trim());
+    }
 
     if (end["stopReason"] === "TOOL_USE") {
       const toolUseId = ctx.pendingToolUseId.get();
@@ -490,39 +575,30 @@ async function handleOutputEvent(
 
       if (!toolUseId || !toolName) return;
 
-      const toolResult = await executeTool(
-        toolName,
-        toolInputStr,
-        ctx.incident_id
-      );
+      const toolResult = await executeTool(toolName, toolInputStr, ctx.incident_id);
 
-      // Send tool result — MUST be on contentEnd with stopReason TOOL_USE
       const resultContentName = crypto.randomUUID();
-      await ctx.sendEvent({
-        contentBlockStart: {
-          promptName: ctx.promptName,
-          contentName: resultContentName,
-          type: "TOOL_RESULT",
-          toolResultConfiguration: {
-            toolUseId,
-            status: toolResult.success ? "success" : "error",
-          },
+
+      await ctx.sendChunk("contentStart", {
+        promptName: ctx.promptName,
+        contentName: resultContentName,
+        interactive: false,
+        role: "TOOL",
+        toolResultConfiguration: {
+          toolUseId,
+          toolStatus: toolResult.success ? "SUCCESS" : "ERROR",
         },
       });
 
-      await ctx.sendEvent({
-        toolResultInputDelta: {
-          promptName: ctx.promptName,
-          contentName: resultContentName,
-          delta: JSON.stringify(toolResult.data),
-        },
+      await ctx.sendChunk("toolResultInput", {
+        promptName: ctx.promptName,
+        contentName: resultContentName,
+        content: JSON.stringify(toolResult.data),
       });
 
-      await ctx.sendEvent({
-        contentBlockEnd: {
-          promptName: ctx.promptName,
-          contentName: resultContentName,
-        },
+      await ctx.sendChunk("contentEnd", {
+        promptName: ctx.promptName,
+        contentName: resultContentName,
       });
 
       ctx.pendingToolUseId.set(null);
@@ -532,10 +608,6 @@ async function handleOutputEvent(
     return;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Tool execution
-// ---------------------------------------------------------------------------
 
 async function executeTool(
   toolName: string,

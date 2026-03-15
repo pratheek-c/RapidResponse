@@ -14,6 +14,7 @@
 import {
   BedrockRuntimeClient,
   InvokeModelCommand,
+  type InvokeModelCommandOutput,
 } from "@aws-sdk/client-bedrock-runtime";
 import { env } from "../config/env.ts";
 import {
@@ -34,10 +35,6 @@ function getBedrock(): BedrockRuntimeClient {
   if (!_bedrock) {
     _bedrock = new BedrockRuntimeClient({
       region: env.AWS_REGION,
-      credentials: {
-        accessKeyId: env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
-      },
     });
   }
   return _bedrock;
@@ -65,7 +62,7 @@ export async function embedText(text: string): Promise<Float32Array> {
     body: JSON.stringify(payload),
   });
 
-  let response: Awaited<ReturnType<BedrockRuntimeClient["send"]>>;
+  let response: InvokeModelCommandOutput;
   try {
     response = await getBedrock().send(command);
   } catch (err) {

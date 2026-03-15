@@ -133,13 +133,14 @@ async function router(req: Request): Promise<Response> {
 export function createServer() {
   return Bun.serve<SocketData>({
     port: env.PORT,
+    idleTimeout: 255, // max allowed by Bun; SSE connections handled below
 
     async fetch(req, server) {
       const url = new URL(req.url);
 
       // WebSocket upgrade for /call
       if (url.pathname === "/call") {
-        const upgraded = server.upgrade<SocketData>(req, {
+        const upgraded = server.upgrade(req, {
           data: { current: null },
         });
         if (upgraded) return undefined;

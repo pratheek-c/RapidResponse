@@ -335,26 +335,11 @@ export function CallerView() {
     endCall,
   } = useCallSocket();
 
-  const hasAutoArmed = useRef(false);
   const [voiceState, setVoiceState] = useState<WaveformState>("idle");
   const [agentSpeaking, setAgentSpeaking] = useState(false);
   const agentSpeakingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Auto-arm: fire startCall as soon as we have a callerId
-  useEffect(() => {
-    if (hasAutoArmed.current) return;
-    if (!callerId) return;
-    if (status !== "idle") return;
-
-    hasAutoArmed.current = true;
-    setVoiceState("arming");
-
-    void startCall(
-      callerId,
-      coords || "Unknown location",
-      address || coords || "Unknown address"
-    );
-  }, [callerId, coords, address, status, startCall]);
+  // No auto-arm — call only starts on button click
 
   // Derive voiceState from call status
   useEffect(() => {
@@ -481,7 +466,7 @@ export function CallerView() {
         )}
 
         {/* Pre-call: detected info */}
-        {canManualStart && !isEnded && !isError && !hasAutoArmed.current && (
+        {canManualStart && !isEnded && !isError && (
           <>
             <div style={{ fontSize: 11, color: "#555", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>
               Detected Info
@@ -535,10 +520,10 @@ export function CallerView() {
 
         {/* CTA area */}
         <div style={{ display: "flex", gap: 12, justifyContent: "center", marginBottom: 8 }}>
-          {canManualStart && hasAutoArmed.current && (
+          {canManualStart && (
             <button
               onClick={() => {
-                hasAutoArmed.current = false;
+                setVoiceState("arming");
                 void startCall(
                   callerId || "CALLER-ANON",
                   coords || "Unknown location",
@@ -547,7 +532,7 @@ export function CallerView() {
               }}
               style={{ background: "#000", color: "#fff", border: "1px solid #444", borderRadius: 10, padding: "14px 40px", fontSize: 16, fontWeight: 800, cursor: "pointer", letterSpacing: 0.5 }}
             >
-              Call 911 Again
+              {isEnded || isError ? "Call 911 Again" : "Call 911"}
             </button>
           )}
           {isArmed && (

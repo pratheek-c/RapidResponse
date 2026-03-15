@@ -53,7 +53,8 @@ export function useCallSocket() {
   const [approachingUnit, setApproachingUnit] = useState<ApproachingUnit | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mediaRecorderRef = useRef<any>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const audioQueueRef = useRef<AudioBuffer[]>([]);
   const playingRef = useRef(false);
@@ -73,14 +74,21 @@ export function useCallSocket() {
     const ctx = getAudioContext();
     const buf = audioQueueRef.current.shift()!;
     playingRef.current = true;
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(ctx.destination);
-    src.onended = () => {
-      playingRef.current = false;
-      playNextInQueue();
+    const play = () => {
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.onended = () => {
+        playingRef.current = false;
+        playNextInQueue();
+      };
+      src.start();
     };
-    src.start();
+    if (ctx.state === "suspended") {
+      ctx.resume().then(play).catch(() => { playingRef.current = false; });
+    } else {
+      play();
+    }
   }, [getAudioContext]);
 
   const enqueueAudio = useCallback(
@@ -106,6 +114,17 @@ export function useCallSocket() {
   const flushAudioQueue = useCallback(() => {
     audioQueueRef.current = [];
     playingRef.current = false;
+  }, []);
+
+  const stopCapture = useCallback(() => {
+    const cap = mediaRecorderRef.current;
+    if (!cap) return;
+    try {
+      cap.processor?.disconnect();
+      cap.source?.disconnect();
+      cap.captureCtx?.close();
+    } catch { /* ignore */ }
+    mediaRecorderRef.current = null;
   }, []);
 
   // ---------------------------------------------------------------------------
@@ -145,22 +164,29 @@ export function useCallSocket() {
         setStatus("active");
         send({ type: "call_start", caller_id: callerId, location, address });
 
-        // Capture audio via MediaRecorder, emit ~32ms chunks
-        const recorder = new MediaRecorder(stream, {
-          mimeType: "audio/webm;codecs=opus",
-        });
-        mediaRecorderRef.current = recorder;
-
-        recorder.ondataavailable = async (e) => {
-          if (e.data.size === 0) return;
-          const arrayBuf = await e.data.arrayBuffer();
-          const base64 = btoa(
-            String.fromCharCode(...new Uint8Array(arrayBuf))
-          );
-          send({ type: "audio_chunk", data: base64 });
+        // Capture raw PCM 16kHz 16-bit mono via ScriptProcessorNode
+        // Nova Sonic requires LPCM — MediaRecorder gives WebM/Opus which it can't decode
+        const captureCtx = new AudioContext({ sampleRate: 16000 });
+        const source = captureCtx.createMediaStreamSource(stream);
+        // 512 samples @ 16kHz = 32ms per chunk
+        const processor = captureCtx.createScriptProcessor(512, 1, 1);
+        processor.onaudioprocess = (e) => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          const float32 = e.inputBuffer.getChannelData(0);
+          const int16 = new Int16Array(float32.length);
+          for (let i = 0; i < float32.length; i++) {
+            int16[i] = Math.max(-32768, Math.min(32767, Math.round(float32[i] * 32767)));
+          }
+          const bytes = new Uint8Array(int16.buffer);
+          let binary = "";
+          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+          send({ type: "audio_chunk", data: btoa(binary) });
         };
+        source.connect(processor);
+        processor.connect(captureCtx.destination);
 
-        recorder.start(32); // 32ms chunks
+        // Store processor so we can disconnect on call end
+        (mediaRecorderRef as React.MutableRefObject<unknown>).current = { captureCtx, source, processor };
       };
 
       ws.onmessage = (ev: MessageEvent<string>) => {
@@ -210,7 +236,7 @@ export function useCallSocket() {
             break;
           case "call_ended":
             setStatus("ended");
-            mediaRecorderRef.current?.stop();
+            stopCapture();
             stream.getTracks().forEach((t) => t.stop());
             break;
         }
@@ -223,6 +249,7 @@ export function useCallSocket() {
 
       ws.onclose = () => {
         if (status !== "ended") setStatus("ended");
+        stopCapture();
         stream.getTracks().forEach((t) => t.stop());
       };
     },
@@ -234,20 +261,20 @@ export function useCallSocket() {
   // ---------------------------------------------------------------------------
   const endCall = useCallback(() => {
     send({ type: "call_end" });
-    mediaRecorderRef.current?.stop();
+    stopCapture();
     flushAudioQueue();
     wsRef.current?.close();
     setStatus("ended");
-  }, [send, flushAudioQueue]);
+  }, [send, stopCapture, flushAudioQueue]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       wsRef.current?.close();
-      mediaRecorderRef.current?.stop();
+      stopCapture();
       audioCtxRef.current?.close().catch(() => undefined);
     };
-  }, []);
+  }, [stopCapture]);
 
   return {
     status,

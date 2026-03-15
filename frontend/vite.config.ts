@@ -13,13 +13,24 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": {
-        target: "http://localhost:3000",
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ""),
-      },
+      // REST routes — hooks use bare paths (no /api prefix)
+      "/incidents": { target: "http://localhost:3000", changeOrigin: true },
+      "/units":     { target: "http://localhost:3000", changeOrigin: true },
+      "/dispatch":  { target: "http://localhost:3000", changeOrigin: true },
+      "/protocols": { target: "http://localhost:3000", changeOrigin: true },
+      "/recordings":{ target: "http://localhost:3000", changeOrigin: true },
+      "/report":    { target: "http://localhost:3000", changeOrigin: true },
+      "/mock":      { target: "http://localhost:3000", changeOrigin: true },
+      "/health":    { target: "http://localhost:3000", changeOrigin: true },
+      // SSE stream
       "/events": {
         target: "http://localhost:3000",
+        changeOrigin: true,
+      },
+      // WebSocket for emergency calls (/call on the backend, /ws/call via legacy proxy)
+      "/call": {
+        target: "ws://localhost:3000",
+        ws: true,
         changeOrigin: true,
       },
       "/ws": {
@@ -27,6 +38,12 @@ export default defineConfig({
         ws: true,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/ws/, ""),
+      },
+      // Catch-all for any /api/* prefixed calls
+      "/api": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ""),
       },
     },
   },
