@@ -9,6 +9,7 @@ The frontend is a React 18 + TypeScript + Vite SPA in `frontend/`.
 - [Setup](#setup)
 - [Project Structure](#project-structure)
 - [Routing](#routing)
+- [Authentication](#authentication)
 - [Hooks](#hooks)
 - [Key Components](#key-components)
 - [Type Model](#type-model)
@@ -46,20 +47,49 @@ Vite dev proxy behavior:
 frontend/src/
 ├── App.tsx
 ├── main.tsx
-├── types/index.ts
+├── config/
+│   ├── constants.ts
+│   ├── firebase.ts        # Firebase app + auth + Google provider
+│   └── mapStyles.ts
+├── types/
+│   ├── index.ts
+│   └── dashboard.ts       # Department, IncidentStatus, SSE event types, etc.
 ├── hooks/
+│   ├── useAuth.ts         # Firebase auth state, department selection, sign-in/out
 │   ├── useCallerInfo.ts
 │   ├── useCallSocket.ts
 │   ├── useIncidents.ts
+│   ├── useSSE.ts
 │   └── useUnits.ts
 ├── components/
-│   ├── Badges.tsx
-│   ├── IncidentList.tsx
-│   ├── IncidentDetail.tsx
-│   └── UnitPanel.tsx
+│   ├── common/
+│   │   ├── DeptIcon.tsx       # Icon per Department (patrol/fire/medical/hazmat)
+│   │   ├── Header.tsx         # Dashboard top bar with live indicator + sign-out
+│   │   ├── LiveIndicator.tsx
+│   │   ├── SeverityBadge.tsx
+│   │   ├── StatusBadge.tsx
+│   │   └── TimeAgo.tsx
+│   ├── dispatch/
+│   │   ├── ActionButtons.tsx
+│   │   ├── QAThread.tsx
+│   │   ├── QuestionInput.tsx
+│   │   ├── SummaryModal.tsx
+│   │   └── UnitSelector.tsx
+│   ├── incidents/
+│   │   ├── IncidentCard.tsx
+│   │   ├── IncidentDetail.tsx
+│   │   └── IncidentList.tsx
+│   ├── map/
+│   │   ├── CommandMap.tsx
+│   │   ├── IncidentMarker.tsx
+│   │   ├── MapLegend.tsx
+│   │   └── UnitMarker.tsx
+│   └── transcript/
+│       └── LiveTranscript.tsx
 └── pages/
     ├── CallerView.tsx
-    └── DispatcherDashboard.tsx
+    ├── DashboardView.tsx
+    └── LoginPage.tsx
 ```
 
 ---
@@ -68,9 +98,46 @@ frontend/src/
 
 | Path | Component | Notes |
 |---|---|---|
-| `/` | `CallerView` | Caller UI; starts call on explicit "Call 911" click |
-| `/dashboard` | `DispatcherDashboard` | Dispatcher operations UI |
+| `/` | `CallerView` | Public caller UI; starts call on "Call 911" button click |
+| `/login` | `LoginPage` | Dispatcher auth; redirects to `/dashboard` after sign-in |
+| `/dashboard` | `DashboardView` | Protected dispatcher dashboard; redirects to `/login` if not authenticated |
 | `*` | Redirect | Fallback to `/` |
+
+---
+
+## Authentication
+
+Authentication is handled via Firebase Auth with Google SSO.
+
+**Config:** `frontend/src/config/firebase.ts`
+- Reads `VITE_FIREBASE_*` env vars at build time
+- If any var is missing, `hasFirebaseConfig` is `false` and sign-in is disabled
+- Falls back to safe demo values so the app can still render
+
+**Hook:** `frontend/src/hooks/useAuth.ts`
+- `isAuthenticated` — `true` when Firebase reports a signed-in user
+- `department` — persisted to `localStorage` under `rr_dispatch_department`
+- `setDepartment(dept)` — updates state and localStorage
+- `signInWithGoogle()` — opens Google sign-in popup
+- `signOut()` — signs out from Firebase
+- `hasFirebaseConfig` — forwarded from firebase config
+
+**Login page flow (`frontend/src/pages/LoginPage.tsx`):**
+1. If already authenticated, immediately redirects to `/dashboard`
+2. Dispatcher picks department from a 2×2 grid (patrol / fire / medical / hazmat)
+3. "Continue with Google" button is disabled until a department is selected and Firebase is configured
+4. On successful sign-in, navigates to `/dashboard`
+
+**Required env vars for auth:**
+
+| Variable | Example |
+|---|---|
+| `VITE_FIREBASE_API_KEY` | `AIzaSy...` |
+| `VITE_FIREBASE_AUTH_DOMAIN` | `your-project.firebaseapp.com` |
+| `VITE_FIREBASE_PROJECT_ID` | `your-project-id` |
+| `VITE_FIREBASE_STORAGE_BUCKET` | `your-project.appspot.com` |
+| `VITE_FIREBASE_MESSAGING_SENDER_ID` | `1234567890` |
+| `VITE_FIREBASE_APP_ID` | `1:123:web:abc` |
 
 ---
 

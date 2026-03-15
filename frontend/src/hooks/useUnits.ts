@@ -1,23 +1,52 @@
-/**
- * useUnits — fetches and caches the list of dispatch units.
- * Refreshes on a 10-second interval AND instantly on SSE unit_dispatched events.
- */
-import { useEffect, useRef, useState, useCallback } from "react";
-import type { Unit, SseEvent } from "@/types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { DEMO_UNIT_COORDS, DEFAULT_MAP_CENTER } from "@/config/constants";
+import { useSSE } from "@/hooks/useSSE";
+import type { ApiResponse, DashboardUnit, Department, UnitType } from "@/types/dashboard";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
+type UnitRow = {
+  id: string;
+  unit_code: string;
+  type: UnitType;
+  status: DashboardUnit["status"];
+  current_incident_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapDepartment(type: UnitType): Department {
+  if (type === "police") return "patrol";
+  if (type === "ems") return "medical";
+  if (type === "hazmat") return "hazmat";
+  return "fire";
+}
+
+function normalizeUnit(unit: UnitRow): DashboardUnit {
+  const fallback = {
+    lat: DEFAULT_MAP_CENTER[0],
+    lng: DEFAULT_MAP_CENTER[1],
+  };
+  const coord = DEMO_UNIT_COORDS[unit.unit_code] ?? fallback;
+  return {
+    ...unit,
+    department: mapDepartment(unit.type),
+    location: coord,
+  };
+}
+
 export function useUnits() {
-  const [units, setUnits] = useState<Unit[]>([]);
+  const [units, setUnits] = useState<DashboardUnit[]>([]);
   const [loading, setLoading] = useState(true);
-  const esRef = useRef<EventSource | null>(null);
+  const { lastEvent } = useSSE();
 
   const fetchAll = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/units`);
-      if (!res.ok) return;
-      const json = (await res.json()) as { ok: boolean; data: Unit[] };
-      if (json.ok) setUnits(json.data);
+      const response = await fetch(`${API_BASE}/units`);
+      if (!response.ok) return;
+      const payload = (await response.json()) as ApiResponse<UnitRow[]>;
+      if (!payload.ok) return;
+      setUnits(payload.data.map(normalizeUnit));
     } catch {
       // non-fatal
     } finally {
@@ -27,36 +56,20 @@ export function useUnits() {
 
   useEffect(() => {
     void fetchAll();
-    const id = setInterval(() => void fetchAll(), 10_000);
-
-    // Also listen for unit_dispatched SSE events to update instantly
-    const es = new EventSource(`${API_BASE}/events`);
-    esRef.current = es;
-
-    const handleUnitDispatched = (ev: MessageEvent<string>) => {
-      try {
-        const event = JSON.parse(ev.data) as SseEvent;
-        const updatedUnit = event.payload as Unit;
-        setUnits((prev) => {
-          const idx = prev.findIndex((u) => u.id === updatedUnit.id);
-          if (idx === -1) return prev; // unknown unit — refetch
-          const next = [...prev];
-          next[idx] = updatedUnit;
-          return next;
-        });
-      } catch {
-        // malformed SSE — fall back to next poll
-      }
-    };
-
-    es.addEventListener("unit_dispatched", handleUnitDispatched);
-
-    return () => {
-      clearInterval(id);
-      es.close();
-      esRef.current = null;
-    };
+    const intervalId = setInterval(() => void fetchAll(), 10_000);
+    return () => clearInterval(intervalId);
   }, [fetchAll]);
 
-  return { units, loading, refetch: fetchAll };
+  useEffect(() => {
+    if (!lastEvent) return;
+    if (lastEvent.type !== "unit_dispatched") return;
+    void fetchAll();
+  }, [lastEvent, fetchAll]);
+
+  const availableCount = useMemo(
+    () => units.filter((unit) => unit.status === "available").length,
+    [units]
+  );
+
+  return { units, loading, availableCount, refetch: fetchAll };
 }

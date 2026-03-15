@@ -325,7 +325,7 @@ export async function startNovaSession(
       },
     });
 
-    // 2. promptStart — tools omitted for debugging; add back once session connects
+    // 2. promptStart — toolConfiguration wired so Nova Sonic can call classify_incident, get_protocol, dispatch_unit
     yield encodeChunk("promptStart", {
       promptName,
       textOutputConfiguration: { mediaType: "text/plain" },
@@ -337,6 +337,9 @@ export async function startNovaSession(
         voiceId: "tiffany",
         encoding: "base64",
         audioType: "SPEECH",
+      },
+      toolConfiguration: {
+        tools: TOOL_SPECS,
       },
     });
 

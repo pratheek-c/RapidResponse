@@ -8,7 +8,7 @@
  */
 
 import { getIncident, listIncidents, updateIncident } from "../services/incidentService.ts";
-import { dbGetTranscription, dbGetDispatchActions, dbGetDispatchQuestions } from "../db/libsql.ts";
+import { dbGetTranscription, dbGetDispatchActions, dbGetDispatchQuestions, dbListIncidentUnits } from "../db/libsql.ts";
 import { getDb } from "../db/libsql.ts";
 import type { UpdateIncidentInput } from "../types/index.ts";
 
@@ -85,6 +85,17 @@ export async function handleIncidents(req: Request): Promise<Response> {
     try {
       const questions = await dbGetDispatchQuestions(getDb(), id);
       return json({ ok: true, data: questions });
+    } catch (err) {
+      return jsonError(err, 500);
+    }
+  }
+
+  // /incidents/:id/units
+  if (pathParts[2] === "units") {
+    if (req.method !== "GET") return notAllowed();
+    try {
+      const units = await dbListIncidentUnits(getDb(), id);
+      return json({ ok: true, data: units });
     } catch (err) {
       return jsonError(err, 500);
     }
