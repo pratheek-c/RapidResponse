@@ -3,7 +3,15 @@
  * Kept in sync manually; no runtime import from backend package.
  */
 
-export type IncidentStatus = "active" | "dispatched" | "resolved" | "cancelled";
+export type IncidentStatus =
+  | "active"
+  | "classified"
+  | "dispatched"
+  | "en_route"
+  | "on_scene"
+  | "completed"
+  | "resolved"
+  | "cancelled";
 export type IncidentPriority = "P1" | "P2" | "P3" | "P4";
 export type IncidentType =
   | "fire"
@@ -28,6 +36,12 @@ export type Incident = {
   resolved_at: string | null;
   s3_audio_prefix: string | null;
   s3_transcript_key: string | null;
+  // Dispatch extension columns
+  accepted_at: string | null;
+  completed_at: string | null;
+  escalated: number; // 0 or 1
+  officer_id: string | null;
+  assigned_units: string | null; // JSON array of unit_ids
 };
 
 export type TranscriptionRole = "caller" | "agent";
@@ -69,7 +83,13 @@ export type SseEventType =
   | "incident_classified"
   | "unit_dispatched"
   | "transcription_turn"
-  | "call_ended";
+  | "call_ended"
+  | "transcript_update"
+  | "extraction_update"
+  | "answer_update"
+  | "status_change"
+  | "escalation_suggestion"
+  | "incident_completed";
 
 export type SseEvent = {
   type: SseEventType;
@@ -203,3 +223,63 @@ export type WsServerMessage =
 export type ApiSuccess<T> = { ok: true; data: T };
 export type ApiError = { ok: false; error: string };
 export type ApiResponse<T> = ApiSuccess<T> | ApiError;
+
+// ---------------------------------------------------------------------------
+// Dashboard Dispatch — new types (mirrors backend/src/types/index.ts)
+// ---------------------------------------------------------------------------
+
+/** Department label used by the dispatcher API. */
+export type Department = "patrol" | "fire" | "medical" | "hazmat";
+
+export type DispatchAction = {
+  id: string;
+  incident_id: string;
+  action_type: "accept" | "escalate" | "question" | "complete" | "save_report";
+  officer_id: string | null;
+  payload: string | null; // JSON string
+  created_at: string;
+};
+
+export type IncidentUnit = {
+  id: string;
+  incident_id: string;
+  unit_id: string;
+  unit_type: UnitType;
+  status: "dispatched" | "en_route" | "on_scene";
+  dispatched_at: string;
+  arrived_at: string | null;
+};
+
+export type DispatchQuestion = {
+  id: string;
+  incident_id: string;
+  officer_id: string | null;
+  question: string;
+  refined_question: string | null;
+  answer: string | null;
+  asked_at: string;
+  answered_at: string | null;
+};
+
+// Extraction data returned by Nova Lite for a live call
+export type ExtractionData = Record<string, string | number | boolean | null>;
+
+// Escalation suggestion from the triage agent
+export type EscalationSuggestion = {
+  incident_id: string;
+  reason: string;
+  suggested_units: Department[];
+};
+
+// --- Dashboard SSE event payloads ---
+
+export type DashboardSsePayload =
+  | { type: "incident_created";      incident_id: string; created_at: string }
+  | { type: "incident_classified";   incident_id: string; incident_type: string; priority: IncidentPriority }
+  | { type: "transcript_update";     incident_id: string; role: "caller" | "ai"; text: string; timestamp: string }
+  | { type: "extraction_update";     incident_id: string; extraction: ExtractionData }
+  | { type: "answer_update";         incident_id: string; question: string; answer: string }
+  | { type: "unit_dispatched";       incident_id: string; unit_id: string; unit_type: Department }
+  | { type: "status_change";         incident_id: string; status: IncidentStatus; unit_id?: string }
+  | { type: "escalation_suggestion"; incident_id: string; reason: string; suggested_units: Department[] }
+  | { type: "incident_completed";    incident_id: string; summary: string };

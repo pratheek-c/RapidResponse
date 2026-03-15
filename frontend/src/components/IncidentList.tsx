@@ -36,6 +36,7 @@ export function IncidentList({ incidents, onSelect, selectedId }: Props) {
     { label: "All", value: "all" },
     { label: "Active", value: "active" },
     { label: "Dispatched", value: "dispatched" },
+    { label: "On Scene", value: "on_scene" },
     { label: "Resolved", value: "resolved" },
   ];
 

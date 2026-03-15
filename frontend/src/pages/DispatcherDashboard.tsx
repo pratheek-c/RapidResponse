@@ -13,7 +13,7 @@ import { useUnits } from "@/hooks/useUnits";
 import { IncidentList } from "@/components/IncidentList";
 import { IncidentDetail } from "@/components/IncidentDetail";
 import { UnitPanel } from "@/components/UnitPanel";
-import type { Incident } from "@/types";
+import type { Incident, IncidentStatus } from "@/types";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -212,9 +212,15 @@ function ZoneChip({ zone }: { zone: MockZone }) {
 // ---------------------------------------------------------------------------
 
 function EmptyState({ incidents }: { incidents: Incident[] }) {
-  const active = incidents.filter((i) => i.status === "active").length;
-  const dispatched = incidents.filter((i) => i.status === "dispatched").length;
-  const resolved = incidents.filter((i) => i.status === "resolved").length;
+  const active = incidents.filter((i) =>
+    (["active", "classified"] as IncidentStatus[]).includes(i.status)
+  ).length;
+  const dispatched = incidents.filter((i) =>
+    (["dispatched", "en_route", "on_scene"] as IncidentStatus[]).includes(i.status)
+  ).length;
+  const resolved = incidents.filter((i) =>
+    (["resolved", "completed"] as IncidentStatus[]).includes(i.status)
+  ).length;
 
   return (
     <div
@@ -256,7 +262,7 @@ function EmptyState({ incidents }: { incidents: Incident[] }) {
 // ---------------------------------------------------------------------------
 
 export function DispatcherDashboard() {
-  const { incidents, connected } = useIncidents();
+  const { incidents, connected, extractions, escalations } = useIncidents();
   const { units, refetch: refetchUnits } = useUnits();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mockData, setMockData] = useState<MockData | null>(null);
@@ -273,12 +279,12 @@ export function DispatcherDashboard() {
       .catch(() => undefined);
   }, []);
 
-  const handleDispatch = async (incidentId: string, unitType: string) => {
+  const handleDispatch = async (incidentId: string, unitIds: string[], officerId: string) => {
     try {
-      await fetch(`${API_BASE}/dispatch`, {
+      await fetch(`${API_BASE}/dispatch/accept`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ incident_id: incidentId, unit_type: unitType }),
+        body: JSON.stringify({ incident_id: incidentId, unit_ids: unitIds, officer_id: officerId }),
       });
       await refetchUnits();
     } catch {
@@ -286,10 +292,16 @@ export function DispatcherDashboard() {
     }
   };
 
-  // Stats
-  const activeCount = incidents.filter((i) => i.status === "active").length;
-  const dispatchedCount = incidents.filter((i) => i.status === "dispatched").length;
-  const resolvedCount = incidents.filter((i) => i.status === "resolved").length;
+  // Stats — cover all expanded statuses
+  const activeCount = incidents.filter((i) =>
+    (["active", "classified"] as IncidentStatus[]).includes(i.status)
+  ).length;
+  const dispatchedCount = incidents.filter((i) =>
+    (["dispatched", "en_route", "on_scene"] as IncidentStatus[]).includes(i.status)
+  ).length;
+  const resolvedCount = incidents.filter((i) =>
+    (["resolved", "completed"] as IncidentStatus[]).includes(i.status)
+  ).length;
   const availableUnits = units.filter((u) => u.status === "available").length;
 
   const onDutyDispatchers = mockData?.dispatchers.filter((d) => d.status === "on_duty") ?? [];
@@ -480,6 +492,8 @@ export function DispatcherDashboard() {
             incident={selectedIncident}
             units={units}
             onDispatch={handleDispatch}
+            extraction={selectedIncident ? (extractions[selectedIncident.id] ?? null) : null}
+            escalation={selectedIncident ? (escalations[selectedIncident.id] ?? null) : null}
           />
         ) : (
           <EmptyState incidents={incidents} />

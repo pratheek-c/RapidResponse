@@ -41,15 +41,23 @@ export function PriorityBadge({ priority }: { priority: IncidentPriority }) {
 // ---------------------------------------------------------------------------
 
 const STATUS_LABELS: Record<IncidentStatus, string> = {
-  active: "ACTIVE",
+  active:     "ACTIVE",
+  classified: "CLASSIFIED",
   dispatched: "DISPATCHED",
-  resolved: "RESOLVED",
-  cancelled: "CANCELLED",
+  en_route:   "EN ROUTE",
+  on_scene:   "ON SCENE",
+  completed:  "COMPLETED",
+  resolved:   "RESOLVED",
+  cancelled:  "CANCELLED",
 };
 
 const STATUS_STYLES: Record<IncidentStatus, { bg: string; color: string; border: string }> = {
   active:     { bg: "#000000", color: "#ffffff", border: "#000000" },
+  classified: { bg: "#222222", color: "#ffffff", border: "#222222" },
   dispatched: { bg: "#444444", color: "#ffffff", border: "#444444" },
+  en_route:   { bg: "#555555", color: "#ffffff", border: "#555555" },
+  on_scene:   { bg: "#333333", color: "#ffffff", border: "#333333" },
+  completed:  { bg: "#f0f0f0", color: "#444444", border: "#cccccc" },
   resolved:   { bg: "#f0f0f0", color: "#666666", border: "#cccccc" },
   cancelled:  { bg: "#f0f0f0", color: "#999999", border: "#cccccc" },
 };
