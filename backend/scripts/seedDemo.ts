@@ -87,24 +87,47 @@ async function exec(sql: string, args: Record<string, string | number | null> = 
 async function seedUnits(): Promise<void> {
   console.log("[seed] Inserting units...");
 
-  const units: Array<[string, string, string, string, string | null]> = [
-    // [id, unit_code, type, status, current_incident_id]
-    [IDS.u_fire1,   "FD-1",   "fire",    "dispatched", IDS.i_dispatched],
-    [IDS.u_fire2,   "FD-2",   "fire",    "available",  null],
-    [IDS.u_ems1,    "EMS-1",  "ems",     "on_scene",   IDS.i_on_scene],
-    [IDS.u_ems2,    "EMS-2",  "ems",     "available",  null],
-    [IDS.u_police1, "PD-1",   "police",  "available",  null],
-    [IDS.u_police2, "PD-2",   "police",  "dispatched", IDS.i_dispatched],
-    [IDS.u_police3, "PD-3",   "police",  "available",  null],
-    [IDS.u_hazmat1, "HZ-1",   "hazmat",  "available",  null],
-    [IDS.u_rescue1, "RS-1",   "rescue",  "available",  null],
+  // Insert all units with current_incident_id = NULL first to avoid FK
+  // violations (the incidents they reference don't exist yet at this point).
+  // seedUnitLinks() below patches the FK column after incidents are inserted.
+  const units: Array<[string, string, string, string]> = [
+    // [id, unit_code, type, status]
+    [IDS.u_fire1,   "FD-1",  "fire",   "dispatched"],
+    [IDS.u_fire2,   "FD-2",  "fire",   "available"],
+    [IDS.u_ems1,    "EMS-1", "ems",    "on_scene"],
+    [IDS.u_ems2,    "EMS-2", "ems",    "available"],
+    [IDS.u_police1, "PD-1",  "police", "available"],
+    [IDS.u_police2, "PD-2",  "police", "dispatched"],
+    [IDS.u_police3, "PD-3",  "police", "available"],
+    [IDS.u_hazmat1, "HZ-1",  "hazmat", "available"],
+    [IDS.u_rescue1, "RS-1",  "rescue", "available"],
   ];
 
-  for (const [id, unit_code, type, status, current_incident_id] of units) {
+  for (const [id, unit_code, type, status] of units) {
     await exec(
       `INSERT OR IGNORE INTO units (id, unit_code, type, status, current_incident_id, created_at, updated_at)
-       VALUES (:id, :unit_code, :type, :status, :current_incident_id, :created_at, :updated_at)`,
-      { id, unit_code, type, status, current_incident_id, created_at: T(3600), updated_at: NOW }
+       VALUES (:id, :unit_code, :type, :status, NULL, :created_at, :updated_at)`,
+      { id, unit_code, type, status, created_at: T(3600), updated_at: NOW }
+    );
+  }
+}
+
+// Patch current_incident_id FK links after incidents have been inserted.
+async function seedUnitLinks(): Promise<void> {
+  console.log("[seed] Patching unit current_incident_id links...");
+
+  const links: Array<[string, string]> = [
+    // [unit_id, incident_id]
+    [IDS.u_fire1,   IDS.i_dispatched],
+    [IDS.u_police2, IDS.i_dispatched],
+    [IDS.u_ems1,    IDS.i_on_scene],
+  ];
+
+  for (const [unit_id, incident_id] of links) {
+    await exec(
+      `UPDATE units SET current_incident_id = :incident_id, updated_at = :updated_at
+       WHERE id = :unit_id`,
+      { unit_id, incident_id, updated_at: NOW }
     );
   }
 }
@@ -469,6 +492,7 @@ async function main(): Promise<void> {
   try {
     await seedUnits();
     await seedIncidents();
+    await seedUnitLinks();
     await seedTranscripts();
     await seedDispatches();
     await seedIncidentUnits();
