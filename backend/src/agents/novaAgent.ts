@@ -311,12 +311,15 @@ export async function startNovaSession(
   let currentTextBlock: { role: "caller" | "agent"; text: string } | null = null;
 
   const promptName = crypto.randomUUID();
-  const systemContentName = crypto.randomUUID(); 
-  const audioContentName = crypto.randomUUID();  
+  const systemContentName = crypto.randomUUID();
+  // mutable — updated by injectText when audio block is cycled
+  let audioContentName = crypto.randomUUID();
   const systemPromptText = buildSystemPrompt(incident_id, caller_location, protocol_context, caller_address, available_units);
+  console.log(`[nova] system prompt length=${systemPromptText.length} units=${available_units?.length ?? 0}`);
 
   async function* buildInputStream() {
     // 1. sessionStart
+    console.log("[nova:stream] → sessionStart");
     yield encodeChunk("sessionStart", {
       inferenceConfiguration: {
         maxTokens: 1024,
@@ -326,6 +329,7 @@ export async function startNovaSession(
     });
 
     // 2. promptStart — toolConfiguration wired so Nova Sonic can call classify_incident, get_protocol, dispatch_unit
+    console.log("[nova:stream] → promptStart");
     yield encodeChunk("promptStart", {
       promptName,
       textOutputConfiguration: { mediaType: "text/plain" },
@@ -344,6 +348,7 @@ export async function startNovaSession(
     });
 
     // 3. contentStart (SYSTEM)
+    console.log("[nova:stream] → contentStart SYSTEM");
     yield encodeChunk("contentStart", {
       promptName,
       contentName: systemContentName,
@@ -354,6 +359,7 @@ export async function startNovaSession(
     });
 
     // 4. textInput
+    console.log("[nova:stream] → textInput SYSTEM");
     yield encodeChunk("textInput", {
       promptName,
       contentName: systemContentName,
@@ -361,6 +367,7 @@ export async function startNovaSession(
     });
 
     // 5. contentEnd
+    console.log("[nova:stream] → contentEnd SYSTEM");
     yield encodeChunk("contentEnd", {
       promptName,
       contentName: systemContentName,
@@ -368,6 +375,7 @@ export async function startNovaSession(
 
     // 6. USER text trigger — makes Nova Sonic respond with the opening greeting
     const triggerContentName = crypto.randomUUID();
+    console.log("[nova:stream] → contentStart TEXT trigger");
     yield encodeChunk("contentStart", {
       promptName,
       contentName: triggerContentName,
@@ -376,17 +384,20 @@ export async function startNovaSession(
       role: "USER",
       textInputConfiguration: { mediaType: "text/plain" },
     });
+    console.log("[nova:stream] → textInput trigger '.'");
     yield encodeChunk("textInput", {
       promptName,
       contentName: triggerContentName,
       content: ".",
     });
+    console.log("[nova:stream] → contentEnd trigger");
     yield encodeChunk("contentEnd", {
       promptName,
       contentName: triggerContentName,
     });
 
     // 7. contentStart (AUDIO)
+    console.log("[nova:stream] → contentStart AUDIO");
     yield encodeChunk("contentStart", {
       promptName,
       contentName: audioContentName,
@@ -410,15 +421,13 @@ export async function startNovaSession(
     // Send 300ms of silence to prime the audio stream so Nova Sonic detects
     // turn start and produces the opening greeting from the system prompt.
     // 300ms @ 16kHz 16-bit mono = 9600 bytes
+    console.log("[nova:stream] → audioInput silence prime");
     {
       const PRIME_BYTES = 9600;
-      const silence = new Uint8Array(PRIME_BYTES);
-      let bin = "";
-      for (let j = 0; j < silence.length; j++) bin += String.fromCharCode(silence[j]);
       eventQueue.push(encodeChunk("audioInput", {
         promptName,
         contentName: audioContentName,
-        content: btoa(bin),
+        content: Buffer.from(new Uint8Array(PRIME_BYTES)).toString("base64"),
       }));
     }
 
@@ -454,17 +463,19 @@ export async function startNovaSession(
 
   (async () => {
     try {
-      const response = await client.send(command);
+      console.log("[nova] calling client.send()...");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const response: any = await client.send(command).catch((sendErr: unknown) => {
+        console.error("[nova] client.send() FAILED:", sendErr instanceof Error ? `${sendErr.name}: ${sendErr.message}` : JSON.stringify(sendErr, Object.getOwnPropertyNames(sendErr as object)));
+        throw sendErr;
+      });
+      console.log("[nova] client.send() succeeded");
 
-      if (
-        !response.body ||
-        typeof (response.body as unknown as AsyncIterable<unknown>)[Symbol.asyncIterator] !== "function"
-      ) {
-        throw new Error(
-          `Nova Sonic response.body is not iterable — raw: ${JSON.stringify(response.body)}`
-        );
+      if (!response.body || typeof response.body[Symbol.asyncIterator] !== "function") {
+        throw new Error("Nova Sonic response.body is not iterable");
       }
 
+      console.log("[nova] iterating response.body...");
       for await (const event of response.body) {
         if (sessionClosed) break;
         // Debug: log raw event keys to diagnose format issues
@@ -491,10 +502,20 @@ export async function startNovaSession(
       callbacks.onEnd("stream_complete");
     } catch (err) {
       if (!sessionClosed) {
+        // Log full error object for diagnosis
+        if (err instanceof Error) {
+          const errObj = err as unknown as Record<string, unknown>;
+          console.error("[nova] stream error name:", err.name);
+          console.error("[nova] stream error message:", err.message);
+          if (errObj["$fault"]) console.error("[nova] stream error $fault:", errObj["$fault"]);
+          if (errObj["$metadata"]) console.error("[nova] stream error $metadata:", JSON.stringify(errObj["$metadata"]));
+          if (errObj["$response"]) console.error("[nova] stream error $response:", JSON.stringify(errObj["$response"]));
+        } else {
+          console.error("[nova] stream error (non-Error):", JSON.stringify(err, Object.getOwnPropertyNames(err as object)));
+        }
         const msg = err instanceof Error
-          ? err.message
+          ? `${err.name}: ${err.message}`
           : (typeof err === "object" ? JSON.stringify(err, Object.getOwnPropertyNames(err as object)) : String(err));
-        console.error("[nova] stream error detail:", msg);
         callbacks.onError(new Error(msg));
       }
     } finally {
@@ -517,6 +538,20 @@ export async function startNovaSession(
 
     async injectText(text: string) {
       if (sessionClosed || !streamWriter) return;
+
+      // Nova Sonic does not allow two interactive content blocks open simultaneously.
+      // Close the current audio block, send text, then reopen a fresh audio block.
+      const oldAudioName = audioContentName;
+      const newAudioName = crypto.randomUUID();
+      audioContentName = newAudioName; // update before any sendAudio calls can race
+
+      // 1. Close current audio content
+      await streamWriter(encodeChunk("contentEnd", {
+        promptName,
+        contentName: oldAudioName,
+      }));
+
+      // 2. Send dispatcher text as a new interactive USER turn
       const injectContentName = crypto.randomUUID();
       await streamWriter(encodeChunk("contentStart", {
         promptName,
@@ -534,6 +569,30 @@ export async function startNovaSession(
       await streamWriter(encodeChunk("contentEnd", {
         promptName,
         contentName: injectContentName,
+      }));
+
+      // 3. Reopen audio channel with new content name
+      await streamWriter(encodeChunk("contentStart", {
+        promptName,
+        contentName: newAudioName,
+        type: "AUDIO",
+        interactive: true,
+        role: "USER",
+        audioInputConfiguration: {
+          mediaType: "audio/lpcm",
+          sampleRateHertz: 16000,
+          sampleSizeBits: 16,
+          channelCount: 1,
+          audioType: "SPEECH",
+          encoding: "base64",
+        },
+      }));
+
+      // 4. Prime the new audio block with 100ms of silence
+      await streamWriter(encodeChunk("audioInput", {
+        promptName,
+        contentName: newAudioName,
+        content: Buffer.from(new Uint8Array(3200)).toString("base64"),
       }));
     },
 
@@ -643,7 +702,6 @@ async function handleOutputEvent(
 
   if (ev["contentEnd"]) {
     const end = ev["contentEnd"] as Record<string, unknown>;
-    const contentName = end["contentName"] as string | undefined;
 
     // Emit accumulated text block
     const block = ctx.currentTextBlock.get();

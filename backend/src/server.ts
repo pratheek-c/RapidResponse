@@ -166,7 +166,7 @@ export function createServer() {
     },
 
     websocket: {
-      open(ws) {
+      open(_ws) {
         // Socket opened — state is already initialised in data
       },
 

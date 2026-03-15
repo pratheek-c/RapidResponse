@@ -12,7 +12,19 @@
  */
 
 import { createClient } from "@libsql/client";
-import * as path from "path";
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+
+const MIGRATIONS_DIR = resolve(import.meta.dir, "../src/db/migrations");
+
+const MIGRATION_FILES = [
+  "001_initial.sql",
+  "002_add_indexes.sql",
+  "003_add_caller_address.sql",
+  "004_dispatch_tables.sql",
+  "005_fix_units_fk.sql",
+  "006_fix_transcription_dispatches_fk.sql",
+];
 
 // ---------------------------------------------------------------------------
 // DB connection — read LIBSQL_URL from env or fall back to local file
@@ -486,10 +498,52 @@ async function seedDispatchQuestions(): Promise<void> {
 // Main
 // ---------------------------------------------------------------------------
 
+async function runMigrations(): Promise<void> {
+  console.log("[seed] Ensuring schema is up to date...");
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    )
+  `);
+  const applied = new Set(
+    (await db.execute("SELECT version FROM schema_migrations")).rows.map(
+      (r) => r["version"] as string
+    )
+  );
+  for (const file of MIGRATION_FILES) {
+    const version = file.replace(".sql", "");
+    if (applied.has(version)) continue;
+    const sql = await readFile(join(MIGRATIONS_DIR, file), "utf-8");
+    await db.executeMultiple(sql);
+    await db.execute({
+      sql: "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+      args: [version, new Date().toISOString()],
+    });
+    console.log(`  [migrate] Applied: ${version}`);
+  }
+}
+
+async function clearData(): Promise<void> {
+  console.log("[seed] Clearing existing data...");
+  // Delete in reverse FK dependency order
+  await db.execute("DELETE FROM dispatch_questions");
+  await db.execute("DELETE FROM dispatch_actions");
+  await db.execute("DELETE FROM incident_units");
+  await db.execute("DELETE FROM dispatches");
+  await db.execute("DELETE FROM transcription_turns");
+  // Nullify unit FK before deleting incidents
+  await db.execute("UPDATE units SET current_incident_id = NULL");
+  await db.execute("DELETE FROM incidents");
+  await db.execute("DELETE FROM units");
+}
+
 async function main(): Promise<void> {
   console.log(`[seed] Connecting to: ${LIBSQL_URL}`);
 
   try {
+    await runMigrations();
+    await clearData();
     await seedUnits();
     await seedIncidents();
     await seedUnitLinks();

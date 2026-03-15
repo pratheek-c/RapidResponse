@@ -34,7 +34,14 @@ async function getDb() {
     )
   );
 
-  for (const file of ["001_initial.sql", "002_add_indexes.sql"]) {
+  for (const file of [
+    "001_initial.sql",
+    "002_add_indexes.sql",
+    "003_add_caller_address.sql",
+    "004_dispatch_tables.sql",
+    "005_fix_units_fk.sql",
+    "006_fix_transcription_dispatches_fk.sql",
+  ]) {
     const version = file.replace(".sql", "");
     if (applied.has(version)) continue;
     const sql = await readFile(join(MIGRATIONS_DIR, file), "utf-8");
@@ -43,6 +50,7 @@ async function getDb() {
       sql: "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
       args: [version, new Date().toISOString()],
     });
+    console.log(`  [migrate] Applied: ${version}`);
   }
 
   return db;

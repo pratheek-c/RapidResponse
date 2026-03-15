@@ -51,7 +51,7 @@ async function* input() {
     inferenceConfiguration: { maxTokens: 512, topP: 0.9, temperature: 0.7 },
   });
 
-  console.log("→ promptStart");
+  console.log("→ promptStart (with tools)");
   yield enc("promptStart", {
     promptName,
     textOutputConfiguration: { mediaType: "text/plain" },
@@ -64,6 +64,57 @@ async function* input() {
       encoding: "base64",
       audioType: "SPEECH",
     },
+    toolConfiguration: {
+      tools: [
+        {
+          toolSpec: {
+            name: "classify_incident",
+            description: "Classify the emergency incident type and priority once you have enough information from the caller.",
+            inputSchema: {
+              json: JSON.stringify({
+                type: "object",
+                properties: {
+                  type: { type: "string", enum: ["fire", "medical", "police", "traffic", "hazmat", "search_rescue", "other"] },
+                  priority: { type: "string", enum: ["P1", "P2", "P3", "P4"], description: "Incident priority: P1=life-threatening, P2=urgent, P3=standard, P4=non-urgent." },
+                },
+                required: ["type", "priority"],
+              }),
+            },
+          },
+        },
+        {
+          toolSpec: {
+            name: "get_protocol",
+            description: "Retrieve relevant emergency response protocol guidance for the current situation.",
+            inputSchema: {
+              json: JSON.stringify({
+                type: "object",
+                properties: {
+                  query: { type: "string", description: "A natural-language description of the situation to look up protocol for." },
+                },
+                required: ["query"],
+              }),
+            },
+          },
+        },
+        {
+          toolSpec: {
+            name: "dispatch_unit",
+            description: "Request dispatch of an emergency unit to the incident location.",
+            inputSchema: {
+              json: JSON.stringify({
+                type: "object",
+                properties: {
+                  incident_id: { type: "string" },
+                  unit_type: { type: "string", enum: ["fire", "ems", "police", "hazmat", "rescue"] },
+                },
+                required: ["incident_id", "unit_type"],
+              }),
+            },
+          },
+        },
+      ],
+    },
   });
 
   console.log("→ contentStart SYSTEM");
@@ -72,7 +123,39 @@ async function* input() {
     type: "TEXT", interactive: false, role: "SYSTEM",
     textInputConfiguration: { mediaType: "text/plain" },
   });
-  yield enc("textInput", { promptName, contentName: sysCN, content: "You are a 911 dispatcher. Say: 911, what is your emergency?" });
+  const sysPrompt = `You are a highly efficient, empathetic human agent handling a live 911 emergency call for Springfield PD in Springfield. You are speaking to the caller over a real-time audio connection.
+
+Current call context:
+- Incident ID: test-001
+- Caller reported location: 53.339618, -6.274695 (The Coombe, Dublin)
+- Department: Springfield PD
+
+[PROTOCOL CONTEXT]
+
+[END PROTOCOL CONTEXT]
+
+Conversational rules you must strictly follow:
+
+Extreme Brevity: Keep every response to 1 or 2 short sentences. Never give long monologues. Ask one question at a time and pause for the caller to respond.
+
+No Formatting: You are generating speech. Never use bullet points, asterisks, numbering, emojis, or any markdown. Use only plain words and standard punctuation.
+
+Natural Phrasing: Use conversational fillers naturally when appropriate, such as "Got it," "Okay," "Understood," or "Alright."
+
+Numbers and Symbols: Spell out all symbols. Say "dollars" not "$". Read numbers conversationally, say "twenty-four hundred" not "2400".
+
+Interruptions: The caller may interrupt you mid-sentence. If they do, immediately stop and address what they said. Never mention that you were interrupted. Seamlessly continue the conversation on the new topic.
+
+Tone: Warm, calm, professional, and quick. Never robotic or overly formal. You are a real person helping someone in crisis.
+
+Your job:
+- Open with exactly: "911, what's your emergency?"
+- Gather: nature of emergency, exact location, caller safety, injuries
+- Use classify_incident once you know enough
+- Use get_protocol when you need guidance on what to tell the caller
+- Use dispatch_unit to send the right unit — pick the closest available one
+- Keep the caller on the line and give short pre-arrival instructions based on protocol`;
+  yield enc("textInput", { promptName, contentName: sysCN, content: sysPrompt });
   yield enc("contentEnd", { promptName, contentName: sysCN });
 
   // Text trigger to make Nova Sonic speak first

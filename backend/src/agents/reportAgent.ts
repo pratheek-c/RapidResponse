@@ -124,8 +124,9 @@ function detectZone(
   zones: MockZone[]
 ): string | null {
   const parts = callerLocation.split(",").map((s) => parseFloat(s.trim()));
-  if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) return null;
-  const [lat, lng] = parts;
+  if (parts.length !== 2 || isNaN(parts[0]!) || isNaN(parts[1]!)) return null;
+  const lat = parts[0] as number;
+  const lng = parts[1] as number;
 
   for (const zone of zones) {
     const { sw, ne } = zone.bbox;
@@ -197,7 +198,7 @@ function buildDispatchedUnits(units: MockUnitWithDistance[]): DispatchedUnitSumm
 
 function buildTimeline(
   transcript: TranscriptionTurn[],
-  callStartMs: number
+  _callStartMs: number
 ): ReportTimelineEvent[] {
   const events: ReportTimelineEvent[] = [];
   const callerTurns = transcript.filter((t) => t.role === "caller");
