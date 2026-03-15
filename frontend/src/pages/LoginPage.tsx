@@ -1,5 +1,5 @@
 import { ShieldAlert, ShieldCheck, RadioTower } from "lucide-react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import type { Department } from "@/types/dashboard";
 import { DeptIcon } from "@/components/common/DeptIcon";
 import { useAuth } from "@/hooks/useAuth";
@@ -12,7 +12,6 @@ const DEPARTMENTS: { id: Department; label: string; description: string }[] = [
 ];
 
 export function LoginPage() {
-  const navigate = useNavigate();
   const { isAuthenticated, department, setDepartment, signInWithGoogle, hasFirebaseConfig } =
     useAuth();
 
@@ -20,9 +19,11 @@ export function LoginPage() {
     return <Navigate to="/dashboard" replace />;
   }
 
-  async function handleSignIn() {
-    await signInWithGoogle();
-    navigate("/dashboard", { replace: true });
+  // signInWithRedirect navigates away from the page — no .then() navigation needed.
+  // On return, onAuthStateChanged fires, isAuthenticated becomes true, and the
+  // Navigate above handles routing to /dashboard.
+  function handleSignIn() {
+    void signInWithGoogle();
   }
 
   return (

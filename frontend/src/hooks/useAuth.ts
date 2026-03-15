@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   onAuthStateChanged,
-  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut as firebaseSignOut,
   type User,
 } from "firebase/auth";
@@ -27,6 +28,11 @@ export function useAuth() {
   });
 
   useEffect(() => {
+    // Handle the redirect result when the page loads after Google sign-in
+    getRedirectResult(firebaseAuth).catch(() => {
+      // Ignore — no redirect in progress or already handled by onAuthStateChanged
+    });
+
     const unsub = onAuthStateChanged(firebaseAuth, (nextUser) => {
       setUser(nextUser);
       setLoading(false);
@@ -43,7 +49,9 @@ export function useAuth() {
     if (!hasFirebaseConfig) {
       throw new Error("Missing Firebase config in VITE_FIREBASE_* environment variables.");
     }
-    await signInWithPopup(firebaseAuth, googleProvider);
+    // Use redirect instead of popup — popup requires third-party storage access
+    // which is blocked by Edge/Safari/Firefox tracking prevention
+    await signInWithRedirect(firebaseAuth, googleProvider);
   }, []);
 
   const signOut = useCallback(async () => {
