@@ -59,9 +59,9 @@ export function RoutePolyline({ from, to, onRouteInfo }: Props) {
   return (
     <Polyline
       positions={coords}
-      color="#22d3ee"
-      weight={3}
-      dashArray="6 4"
+      color="#2563eb"
+      weight={4}
+      dashArray="8 6"
       opacity={0.85}
     />
   );
