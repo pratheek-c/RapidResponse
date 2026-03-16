@@ -58,5 +58,22 @@ type: project
 
 ## Config
 - `config/constants.ts` — API_BASE from VITE_API_BASE env
-- `config/firebase.ts` — Firebase config
+- `config/firebase.ts` — Firebase config: initialises app only when all VITE_FIREBASE_* vars are present; exposes `firebaseApp`, `firebaseAuth`, `googleProvider`, `hasFirebaseConfig`
 - `config/mapStyles.ts` — map styling config
+
+## Auth (useAuth.ts + LoginPage.tsx)
+- Firebase Google SSO via `signInWithPopup`; guarded by `hasFirebaseConfig`
+- Dev bypass: `signInDev()` sets localStorage key `rr_dev_bypass=1` → `isAuthenticated` becomes true → Navigate fires
+- `loading` state: true until `onAuthStateChanged` first fires (or firebase is absent); LoginPage renders a Loader2 spinner while `loading === true` to prevent flash-of-login for already-authenticated users
+- Frontend `.env` has all 6 VITE_FIREBASE_* vars set without leading spaces (unlike the backend .env which has spurious leading spaces — backend .env is NOT read by Vite, frontend .env is)
+
+## Dublin Unit Type Label Map (canonical)
+All components must use these display labels for unit type strings:
+- `fire`    → "DFB"   (Dublin Fire Brigade)
+- `ems`     → "NAS"   (National Ambulance Service)
+- `police`  → "GARDA" (An Garda Síochána)
+- `hazmat`  → "HAZMAT"
+- `rescue`  → "SAR"   (Search & Rescue)
+- Incident type `traffic` → "RTC" (Road Traffic Collision, Irish convention)
+- Incident type `medical` → "NAS"
+- Files containing these label maps: UnitSelector.tsx, UnitPanel.tsx, Badges.tsx, IncidentCard.tsx

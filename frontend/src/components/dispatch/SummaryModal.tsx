@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 
 type SummaryModalProps = {
   open: boolean;
@@ -23,8 +24,8 @@ export function SummaryModal({ open, initialSummary, onSave, onClose }: SummaryM
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/70 p-4">
       <div className="w-full max-w-2xl rounded-lg border border-slate-700 bg-command-panel p-4 shadow-glow">
         <h2 className="text-lg font-semibold text-slate-100">Finalize Incident Summary</h2>
         <textarea
@@ -51,6 +52,7 @@ export function SummaryModal({ open, initialSummary, onSave, onClose }: SummaryM
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

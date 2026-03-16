@@ -10,8 +10,8 @@ type IncidentCardProps = {
 };
 
 const TYPE_LABELS: Record<string, string> = {
-  fire: "FIRE",
-  medical: "MED",
+  fire: "DFB",
+  medical: "NAS",
   police: "GARDA",
   traffic: "RTC",
   hazmat: "HAZMAT",

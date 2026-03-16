@@ -87,13 +87,13 @@ export function StatusBadge({ status }: { status: IncidentStatus }) {
 // ---------------------------------------------------------------------------
 
 const TYPE_ICONS: Record<IncidentType, string> = {
-  fire:         "FIRE",
-  medical:      "MED",
-  police:       "PD",
-  traffic:      "MVA",
-  hazmat:       "HZM",
+  fire:         "DFB",
+  medical:      "NAS",
+  police:       "GARDA",
+  traffic:      "RTC",
+  hazmat:       "HAZMAT",
   search_rescue: "SAR",
-  other:        "OTH",
+  other:        "OTHER",
 };
 
 export function TypeChip({ type }: { type: IncidentType }) {

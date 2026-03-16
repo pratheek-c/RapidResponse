@@ -12,7 +12,7 @@ type Filter = "all" | "active" | "dispatched" | "completed";
 
 export function IncidentList({ incidents, selectedId, onSelect }: IncidentListProps) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<Filter>("active");
 
   const counts = useMemo<Record<Filter, number>>(
     () => ({

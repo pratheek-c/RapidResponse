@@ -98,6 +98,7 @@ export function ActionButtons({
   }, [onEscalate]);
 
   const handleComplete = useCallback(async () => {
+    if (!window.confirm("Mark this incident as completed? This cannot be undone.")) return;
     setCompleting(true);
     try {
       await onComplete();
