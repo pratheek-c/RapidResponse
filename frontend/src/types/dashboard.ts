@@ -178,6 +178,34 @@ export type SseCovertDistressEvent = {
   };
 };
 
+export type SseBackupRequestedEvent = {
+  type: "backup_requested";
+  data: {
+    incident_id: string;
+    requesting_unit: string;
+    requested_types: string[];
+    urgency: string;
+    message: string;
+  };
+};
+
+export type SseBackupAcceptedEvent = {
+  type: "backup_accepted";
+  data: {
+    incident_id: string;
+    responding_unit: string;
+  };
+};
+
+export type SseUnitStatusChangeEvent = {
+  type: "unit_status_change";
+  data: {
+    unit_id: string;
+    status: string;
+    assigned_incident: string | null;
+  };
+};
+
 export type SSEEvent =
   | SseIncidentClassifiedEvent
   | SseTranscriptUpdateEvent
@@ -187,7 +215,10 @@ export type SSEEvent =
   | SseStatusChangeEvent
   | SseEscalationSuggestionEvent
   | SseIncidentCompletedEvent
-  | SseCovertDistressEvent;
+  | SseCovertDistressEvent
+  | SseBackupRequestedEvent
+  | SseBackupAcceptedEvent
+  | SseUnitStatusChangeEvent;
 
 export type ApiSuccess<T> = { ok: true; data: T };
 export type ApiError = { ok: false; error: string };

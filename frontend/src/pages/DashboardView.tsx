@@ -6,6 +6,7 @@ import { MapLegend } from "@/components/map/MapLegend";
 import { CommandMap } from "@/components/map/CommandMap";
 import { IncidentList } from "@/components/incidents/IncidentList";
 import { IncidentDetail } from "@/components/incidents/IncidentDetail";
+import { BackupAlertBanner } from "@/components/common/BackupAlertBanner";
 import { useAuth } from "@/hooks/useAuth";
 import { useIncidents } from "@/hooks/useIncidents";
 import { useUnits } from "@/hooks/useUnits";
@@ -326,6 +327,9 @@ export function DashboardView() {
         userLabel={userLabel}
         onSignOut={signOut}
       />
+
+      {/* Backup alert banner — shown when a backup_requested SSE event arrives */}
+      <BackupAlertBanner />
 
       {/* Horizontal scrolling ticker for nearby active incidents */}
       <IncidentTicker incidents={incidents} onSelect={setSelectedId} />

@@ -2,6 +2,9 @@ import type { DashboardIncident } from "@/types/dashboard";
 import { SeverityBadge } from "@/components/common/SeverityBadge";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { TimeAgo } from "@/components/common/TimeAgo";
+import { useSession, canTakeIncident } from "@/context/SessionContext";
+
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 type IncidentCardProps = {
   incident: DashboardIncident;
@@ -44,9 +47,48 @@ function priorityBorderClass(priority: DashboardIncident["priority"]): string {
   return "border-l-slate-700";
 }
 
+/** Returns parsed assigned unit IDs */
+function getAssignedUnits(incident: DashboardIncident): string[] {
+  if (!incident.assigned_units) return [];
+  try {
+    const parsed = JSON.parse(incident.assigned_units);
+    if (Array.isArray(parsed)) return parsed as string[];
+  } catch {
+    // fallback
+  }
+  return incident.assigned_units
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 export function IncidentCard({ incident, selected, onSelect }: IncidentCardProps) {
   const overdue = isOverdue(incident);
   const borderAccent = priorityBorderClass(incident.priority);
+  const { session } = useSession();
+
+  const isUnitOfficer = session?.role === "unit_officer";
+  const myUnitId = session?.unit?.id;
+
+  const assignedUnits = getAssignedUnits(incident);
+  const isMyIncident = isUnitOfficer && myUnitId ? assignedUnits.includes(myUnitId) : false;
+  const isAssignedToOther = isUnitOfficer && assignedUnits.length > 0 && !isMyIncident;
+  const canTake = isUnitOfficer && canTakeIncident(session, incident);
+
+  async function handleTake(e: React.MouseEvent) {
+    e.stopPropagation(); // don't also trigger card select
+    if (!myUnitId) return;
+    try {
+      await fetch(`${API_BASE}/dispatch/take`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ incident_id: incident.id, unit_id: myUnitId }),
+      });
+      // The SSE stream will update the incident in state
+    } catch {
+      // silently ignore; SSE will reflect result
+    }
+  }
 
   return (
     <button
@@ -102,6 +144,12 @@ export function IncidentCard({ incident, selected, onSelect }: IncidentCardProps
             Covert
           </span>
         )}
+        {/* Unit Officer role badges */}
+        {isMyIncident && (
+          <span className="rounded border border-emerald-700/60 bg-emerald-900/30 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-300">
+            My Incident
+          </span>
+        )}
       </div>
 
       {/* Row 3: summary */}
@@ -129,6 +177,29 @@ export function IncidentCard({ incident, selected, onSelect }: IncidentCardProps
           )}
           {incident.hazards.weapon && (
             <span className="text-[10px] text-red-400">Weapon reported</span>
+          )}
+        </div>
+      )}
+
+      {/* Row 6: Unit Officer action row */}
+      {isUnitOfficer && (
+        <div className="mt-2 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          {canTake && (
+            <button
+              type="button"
+              onClick={(e) => void handleTake(e)}
+              className="flex items-center gap-1 rounded border border-emerald-700/70 bg-emerald-900/40 px-2 py-1 text-[11px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-900"
+            >
+              I'll Respond
+            </button>
+          )}
+          {isMyIncident && (
+            <span className="flex items-center gap-1 rounded border border-emerald-700/60 bg-emerald-950/40 px-2 py-1 text-[11px] font-semibold text-emerald-300">
+              My Incident
+            </span>
+          )}
+          {isAssignedToOther && (
+            <span className="text-[11px] text-slate-500 italic">View only</span>
           )}
         </div>
       )}

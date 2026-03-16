@@ -10,7 +10,10 @@ type DashboardEventType =
   | "status_change"
   | "escalation_suggestion"
   | "incident_completed"
-  | "covert_distress";
+  | "covert_distress"
+  | "backup_requested"
+  | "backup_accepted"
+  | "unit_status_change";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -30,6 +33,9 @@ const EVENT_TYPES: DashboardEventType[] = [
   "escalation_suggestion",
   "incident_completed",
   "covert_distress",
+  "backup_requested",
+  "backup_accepted",
+  "unit_status_change",
 ];
 
 export function useSSE() {

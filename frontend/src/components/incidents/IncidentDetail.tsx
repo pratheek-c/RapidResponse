@@ -10,6 +10,7 @@ import {
   ShieldX,
   ActivitySquare,
   EyeOff,
+  Lock,
 } from "lucide-react";
 import type {
   ApiResponse,
@@ -29,7 +30,9 @@ import { QuestionInput } from "@/components/dispatch/QuestionInput";
 import { UnitSelector } from "@/components/dispatch/UnitSelector";
 import { ActionButtons } from "@/components/dispatch/ActionButtons";
 import { SummaryModal } from "@/components/dispatch/SummaryModal";
+import { BackupModal } from "@/components/dispatch/BackupModal";
 import { useSSE } from "@/hooks/useSSE";
+import { useSession, canViewFullDetail } from "@/context/SessionContext";
 
 type IncidentDetailProps = {
   incident: DashboardIncident;
@@ -185,6 +188,26 @@ function AIReportCard({ incident }: { incident: DashboardIncident }) {
 }
 
 // ---------------------------------------------------------------------------
+// Restricted view — shown to unit officers not assigned to this incident
+// ---------------------------------------------------------------------------
+
+function RestrictedView({ incident }: { incident: DashboardIncident }) {
+  return (
+    <div className="flex-1 space-y-3 overflow-y-auto p-3">
+      <AIReportCard incident={incident} />
+
+      <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-4 text-center">
+        <Lock className="mx-auto mb-2 h-5 w-5 text-slate-500" />
+        <p className="text-sm font-semibold text-slate-400">Not assigned to you</p>
+        <p className="mt-1 text-xs text-slate-600">
+          Full incident controls are only available to the assigned unit.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -193,9 +216,15 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
   const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
   const [qaEntries, setQaEntries] = useState<QAEntry[]>([]);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [backupOpen, setBackupOpen] = useState(false);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const { lastEvent } = useSSE();
+  const { session } = useSession();
+
+  const isUnitOfficer = session?.role === "unit_officer";
+  const myUnitId = session?.unit?.id;
+  const fullAccess = canViewFullDetail(session, incident);
 
   // Auto-dismiss action error after 6 seconds
   useEffect(() => {
@@ -301,12 +330,11 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setActionError(`Action failed — please retry or contact supervisor. ${msg}`);
-      throw err; // re-throw so ActionButtons can show its own toast
+      throw err;
     }
   }
 
   async function handleAsk(question: string) {
-    // Optimistic update — show question immediately before the network round-trip
     const optimisticEntry: QAEntry = {
       id: crypto.randomUUID(),
       incident_id: incident.id,
@@ -325,12 +353,10 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
       body: JSON.stringify({ incident_id: incident.id, question, officer_id: officerId }),
     });
     if (!res.ok) {
-      // Remove the optimistic entry on failure
       setQaEntries((prev) => prev.filter((e) => e.id !== optimisticEntry.id));
       setActionError(`Question failed to send — please retry. (${res.status})`);
       return;
     }
-    // Sync with server to get the real ID assigned by DB
     await loadQuestions();
   }
 
@@ -393,6 +419,14 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
         onClose={() => setSummaryOpen(false)}
       />
 
+      {backupOpen && myUnitId && (
+        <BackupModal
+          incidentId={incident.id}
+          requestingUnit={myUnitId}
+          onClose={() => setBackupOpen(false)}
+        />
+      )}
+
       {/* Detail header */}
       <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
         <button
@@ -418,115 +452,144 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
         </div>
       </div>
 
-      {/* Scrollable body */}
-      <div className="flex-1 space-y-3 overflow-y-auto p-3">
+      {/* Scrollable body — gated by role */}
+      {!fullAccess ? (
+        <RestrictedView incident={incident} />
+      ) : (
+        <div className="flex-1 space-y-3 overflow-y-auto p-3">
 
-        {/* Covert distress banner — shown when AI has flagged silent approach required */}
-        {incident.covert_distress && (
-          <div className="rounded-lg border border-violet-700/60 bg-violet-950/40 px-3 py-2.5">
-            <div className="mb-1 flex items-center gap-2">
-              <EyeOff className="h-3.5 w-3.5 text-violet-300" />
-              <p className="text-[10px] font-bold uppercase tracking-widest text-violet-300">
-                Silent Approach Required
+          {/* Covert distress banner */}
+          {incident.covert_distress && (
+            <div className="rounded-lg border border-violet-700/60 bg-violet-950/40 px-3 py-2.5">
+              <div className="mb-1 flex items-center gap-2">
+                <EyeOff className="h-3.5 w-3.5 text-violet-300" />
+                <p className="text-[10px] font-bold uppercase tracking-widest text-violet-300">
+                  Silent Approach Required
+                </p>
+              </div>
+              <p className="text-xs text-violet-200">
+                Caller cannot speak freely. AI has switched to yes/no mode. Dispatch units with NO SIRENS. Do not announce approach on radio.
               </p>
-            </div>
-            <p className="text-xs text-violet-200">
-              Caller cannot speak freely. AI has switched to yes/no mode. Dispatch units with NO SIRENS. Do not announce approach on radio.
-            </p>
-          </div>
-        )}
-
-        {/* AI Report — always shown, auto-generated */}
-        <AIReportCard incident={incident} />
-
-        {/* Transcript */}
-        <div className="rounded-lg border border-slate-700 bg-command-card p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-              Live Transcript
-              {transcript.length > 0 && (
-                <span className="ml-2 rounded-full bg-slate-700 px-1.5 py-0.5 text-slate-300">
-                  {transcript.length}
-                </span>
-              )}
-            </p>
-            <button
-              type="button"
-              onClick={() => void loadTranscript()}
-              disabled={transcriptLoading}
-              title="Refresh transcript"
-              className="flex items-center gap-1 text-xs text-blue-400 transition-colors hover:text-blue-300 disabled:opacity-50"
-            >
-              <RefreshCw className={`h-3 w-3 ${transcriptLoading ? "animate-spin" : ""}`} />
-              Refresh
-            </button>
-          </div>
-          <LiveTranscript lines={transcript} />
-        </div>
-
-        {/* Dispatch Q&A */}
-        <div className="rounded-lg border border-slate-700 bg-command-card p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-              Dispatch Q&amp;A
-              {qaEntries.length > 0 && (
-                <span className="ml-2 rounded-full bg-slate-700 px-1.5 py-0.5 text-slate-300">
-                  {qaEntries.length}
-                </span>
-              )}
-            </p>
-            <button
-              type="button"
-              onClick={() => void loadQuestions()}
-              className="text-xs text-blue-400 transition-colors hover:text-blue-300"
-            >
-              Refresh
-            </button>
-          </div>
-          <QAThread entries={qaEntries} />
-          <div className="mt-2">
-            <QuestionInput onAsk={handleAsk} />
-          </div>
-        </div>
-
-        {/* Unit assignment */}
-        <div className="rounded-lg border border-slate-700 bg-command-card p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-              Assign Units
-            </p>
-            <div className="flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
-              <Siren className="h-3 w-3 text-amber-300" />
-              {selectedUnitIds.length} selected
-            </div>
-          </div>
-
-          <UnitSelector
-            units={units}
-            selectedUnitIds={selectedUnitIds}
-            onToggle={toggleUnit}
-            incidentLat={incident.location.lat}
-            incidentLng={incident.location.lng}
-          />
-
-          {actionError && (
-            <div className="mt-2 rounded-md border border-red-700/60 bg-red-950/60 px-3 py-2 text-xs font-medium text-red-200">
-              {actionError}
             </div>
           )}
 
-          <div className="mt-3">
-            <ActionButtons
-              onAccept={handleAccept}
-              onEscalate={handleEscalate}
-              onComplete={handleComplete}
-              incidentStatus={incident.status}
-              selectedUnitIds={selectedUnitIds}
-            />
-          </div>
-        </div>
+          {/* AI Report — always shown */}
+          <AIReportCard incident={incident} />
 
-      </div>
+          {/* Transcript */}
+          <div className="rounded-lg border border-slate-700 bg-command-card p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                Live Transcript
+                {transcript.length > 0 && (
+                  <span className="ml-2 rounded-full bg-slate-700 px-1.5 py-0.5 text-slate-300">
+                    {transcript.length}
+                  </span>
+                )}
+              </p>
+              <button
+                type="button"
+                onClick={() => void loadTranscript()}
+                disabled={transcriptLoading}
+                title="Refresh transcript"
+                className="flex items-center gap-1 text-xs text-blue-400 transition-colors hover:text-blue-300 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3 w-3 ${transcriptLoading ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+            </div>
+            <LiveTranscript lines={transcript} />
+          </div>
+
+          {/* Dispatch Q&A */}
+          <div className="rounded-lg border border-slate-700 bg-command-card p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                Dispatch Q&amp;A
+                {qaEntries.length > 0 && (
+                  <span className="ml-2 rounded-full bg-slate-700 px-1.5 py-0.5 text-slate-300">
+                    {qaEntries.length}
+                  </span>
+                )}
+              </p>
+              <button
+                type="button"
+                onClick={() => void loadQuestions()}
+                className="text-xs text-blue-400 transition-colors hover:text-blue-300"
+              >
+                Refresh
+              </button>
+            </div>
+            <QAThread entries={qaEntries} />
+            <div className="mt-2">
+              <QuestionInput onAsk={handleAsk} />
+            </div>
+          </div>
+
+          {/* Unit assignment — dispatcher only */}
+          {!isUnitOfficer && (
+            <div className="rounded-lg border border-slate-700 bg-command-card p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                  Assign Units
+                </p>
+                <div className="flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
+                  <Siren className="h-3 w-3 text-amber-300" />
+                  {selectedUnitIds.length} selected
+                </div>
+              </div>
+
+              <UnitSelector
+                units={units}
+                selectedUnitIds={selectedUnitIds}
+                onToggle={toggleUnit}
+                incidentLat={incident.location.lat}
+                incidentLng={incident.location.lng}
+              />
+
+              {actionError && (
+                <div className="mt-2 rounded-md border border-red-700/60 bg-red-950/60 px-3 py-2 text-xs font-medium text-red-200">
+                  {actionError}
+                </div>
+              )}
+
+              <div className="mt-3">
+                <ActionButtons
+                  onAccept={handleAccept}
+                  onEscalate={handleEscalate}
+                  onComplete={handleComplete}
+                  incidentStatus={incident.status}
+                  selectedUnitIds={selectedUnitIds}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Backup button — unit officers only (on their own incident) */}
+          {isUnitOfficer && myUnitId && (
+            <div className="rounded-lg border border-slate-700 bg-command-card p-3">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                Unit Actions
+              </p>
+
+              {actionError && (
+                <div className="mb-2 rounded-md border border-red-700/60 bg-red-950/60 px-3 py-2 text-xs font-medium text-red-200">
+                  {actionError}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setBackupOpen(true)}
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-700/70 bg-red-600/10 px-4 py-2.5 text-sm font-semibold text-red-200 transition-colors hover:bg-red-600/20"
+              >
+                Call Backup
+              </button>
+            </div>
+          )}
+
+        </div>
+      )}
     </section>
   );
 }

@@ -3,6 +3,7 @@ import { RadioTower, ShieldAlert, Clock, Users } from "lucide-react";
 import type { Department } from "@/types/dashboard";
 import { DeptIcon } from "@/components/common/DeptIcon";
 import { LiveIndicator } from "@/components/common/LiveIndicator";
+import { useSession } from "@/context/SessionContext";
 
 type HeaderProps = {
   connected: boolean;
@@ -63,8 +64,61 @@ function ShiftBadge() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Role badge — shows dispatcher station or unit officer status
+// ---------------------------------------------------------------------------
+
+function RoleBadge({
+  onGoOffDuty,
+}: {
+  onGoOffDuty?: () => void;
+}) {
+  const { session } = useSession();
+
+  if (!session) return null;
+
+  if (session.role === "dispatcher") {
+    const stationName = session.station?.name ?? "Command Center";
+    return (
+      <div className="hidden items-center gap-1.5 rounded-md border border-blue-800/60 bg-blue-950/40 px-2 py-1 text-xs text-blue-200 md:flex">
+        <span>📡</span>
+        <span className="font-semibold">Dispatcher</span>
+        <span className="text-blue-400/70">—</span>
+        <span className="text-blue-300">{stationName}</span>
+      </div>
+    );
+  }
+
+  // unit_officer
+  const unitLabel = session.unit?.label ?? "Unknown Unit";
+  return (
+    <div className="hidden items-center gap-1.5 rounded-md border border-emerald-800/60 bg-emerald-950/30 px-2 py-1 text-xs text-emerald-200 md:flex">
+      <span>🛡️</span>
+      <span className="font-semibold">{unitLabel}</span>
+      <span className="text-emerald-400/70">—</span>
+      <span className="text-emerald-300">On Duty</span>
+      {onGoOffDuty && (
+        <button
+          type="button"
+          onClick={onGoOffDuty}
+          className="ml-1 rounded border border-emerald-700/60 bg-emerald-900/40 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-900"
+        >
+          Go Off Duty
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function Header({ connected, department, userLabel, onSignOut }: HeaderProps) {
   const [signOutPending, setSignOutPending] = useState(false);
+  const { session, clearSession } = useSession();
+
+  function handleGoOffDuty() {
+    // For unit officers, "Go Off Duty" clears the session and redirects to login
+    clearSession();
+    void onSignOut();
+  }
 
   return (
     <>
@@ -96,7 +150,11 @@ export function Header({ connected, department, userLabel, onSignOut }: HeaderPr
               </button>
               <button
                 type="button"
-                onClick={() => { setSignOutPending(false); void onSignOut(); }}
+                onClick={() => {
+                  setSignOutPending(false);
+                  clearSession();
+                  void onSignOut();
+                }}
                 className="flex-1 rounded-md border border-red-700 bg-red-900/40 px-3 py-2 text-sm font-semibold text-red-200 transition-colors hover:bg-red-900/70"
               >
                 Sign Out
@@ -128,18 +186,23 @@ export function Header({ connected, department, userLabel, onSignOut }: HeaderPr
 
           <LiveIndicator connected={connected} />
 
-          <div className="hidden items-center gap-1 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-xs text-slate-300 md:flex">
-            <DeptIcon department={department} />
-            <span className="font-semibold uppercase tracking-wide">
-              {department === "patrol"
-                ? "Garda"
-                : department === "fire"
-                  ? "DFB"
-                  : department === "medical"
-                    ? "NAS"
-                    : department.toUpperCase()}
-            </span>
-          </div>
+          {/* Role badge — replaces generic department pill for role-aware display */}
+          {session ? (
+            <RoleBadge onGoOffDuty={session.role === "unit_officer" ? handleGoOffDuty : undefined} />
+          ) : (
+            <div className="hidden items-center gap-1 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-xs text-slate-300 md:flex">
+              <DeptIcon department={department} />
+              <span className="font-semibold uppercase tracking-wide">
+                {department === "patrol"
+                  ? "Garda"
+                  : department === "fire"
+                    ? "DFB"
+                    : department === "medical"
+                      ? "NAS"
+                      : department.toUpperCase()}
+              </span>
+            </div>
+          )}
 
           <div className="hidden items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-xs text-slate-300 sm:flex">
             <RadioTower className="h-3.5 w-3.5 text-sky-300" />
