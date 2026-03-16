@@ -1,0 +1,42 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Editor / tool config
+.opencode
+.claude
+opencode.json
+*.md
+!backend/protocols/*.md
+
+# Dependencies — reinstalled inside builder stages
+node_modules
+*/node_modules
+**/node_modules
+
+# Build artefacts (rebuilt inside builder stages)
+*/dist
+frontend/dist
+
+# Database & vector store data — lives on a named volume, never baked in
+backend/data
+
+# Secrets — never enter the build context
+.env
+.env.*
+!.env.example
+
+# Tests & CI
+test-results
+tests
+specs
+seed.spec.ts
+playwright.config.ts
+*.spec.ts
+*.test.ts
+
+# OS noise
+.DS_Store
+Thumbs.db
+nul
