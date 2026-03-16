@@ -1,18 +1,26 @@
 import { useMemo, useState } from "react";
 import type { DashboardIncident } from "@/types/dashboard";
 import { IncidentCard } from "@/components/incidents/IncidentCard";
+import { filterIncidentsByTab, type Filter } from "@/utils/incidentFilters";
 
 type IncidentListProps = {
   incidents: DashboardIncident[];
   selectedId: string | null;
   onSelect: (incidentId: string) => void;
+  filter: Filter;
+  onFilterChange: (f: Filter) => void;
 };
 
-type Filter = "all" | "active" | "dispatched" | "completed";
+const PRIORITY_ORDER: Record<string, number> = { P1: 0, P2: 1, P3: 2, P4: 3 };
 
-export function IncidentList({ incidents, selectedId, onSelect }: IncidentListProps) {
+export function IncidentList({
+  incidents,
+  selectedId,
+  onSelect,
+  filter,
+  onFilterChange,
+}: IncidentListProps) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<Filter>("active");
 
   const counts = useMemo<Record<Filter, number>>(
     () => ({
@@ -35,27 +43,27 @@ export function IncidentList({ incidents, selectedId, onSelect }: IncidentListPr
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return incidents.filter((incident) => {
-      const byFilter =
-        filter === "all"
-          ? true
-          : filter === "active"
-            ? incident.status === "active" || incident.status === "classified"
-            : filter === "dispatched"
-              ? incident.status === "dispatched" ||
-                incident.status === "en_route" ||
-                incident.status === "on_scene"
-              : incident.status === "completed" || incident.status === "resolved";
-
-      if (!byFilter) return false;
+    const byTab = filterIncidentsByTab(incidents, filter);
+    const result = byTab.filter((incident) => {
       if (!q) return true;
       return (
         incident.id.toLowerCase().includes(q) ||
+        (incident.cad_number ?? "").toLowerCase().includes(q) ||
         incident.summary_line.toLowerCase().includes(q) ||
         incident.location.address.toLowerCase().includes(q) ||
         (incident.type ?? "").toLowerCase().includes(q)
       );
     });
+
+    // Sort: P1 → P2 → P3 → P4 → unprioritised; within same priority newest first
+    result.sort((a, b) => {
+      const pa = a.priority !== null ? (PRIORITY_ORDER[a.priority] ?? 4) : 4;
+      const pb = b.priority !== null ? (PRIORITY_ORDER[b.priority] ?? 4) : 4;
+      if (pa !== pb) return pa - pb;
+      return Date.parse(b.created_at) - Date.parse(a.created_at);
+    });
+
+    return result;
   }, [filter, incidents, query]);
 
   const hasActive = counts.active > 0;
@@ -90,7 +98,7 @@ export function IncidentList({ incidents, selectedId, onSelect }: IncidentListPr
             <button
               key={option}
               type="button"
-              onClick={() => setFilter(option)}
+              onClick={() => onFilterChange(option)}
               className={`flex flex-col items-center rounded-md border px-1 py-1 capitalize transition-colors ${
                 filter === option
                   ? "border-blue-500/60 bg-blue-500/20 text-blue-100"

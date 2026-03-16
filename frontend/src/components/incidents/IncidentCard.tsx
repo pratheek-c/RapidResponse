@@ -53,7 +53,7 @@ export function IncidentCard({ incident, selected, onSelect }: IncidentCardProps
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      aria-label={`Incident ${incident.id.slice(0, 8)}: ${incident.summary_line}`}
+      aria-label={`Incident ${incident.cad_number ?? incident.id.slice(0, 8)}: ${incident.summary_line}`}
       className={[
         "animate-slide-up w-full rounded-lg border border-l-4 p-3 text-left transition",
         borderAccent,
@@ -68,7 +68,7 @@ export function IncidentCard({ incident, selected, onSelect }: IncidentCardProps
       <div className="mb-1.5 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <p className="font-mono text-xs font-bold text-slate-200">
-            #{incident.id.slice(0, 8).toUpperCase()}
+            {incident.cad_number ?? `#${incident.id.slice(0, 8).toUpperCase()}`}
           </p>
           {incident.type && (
             <span

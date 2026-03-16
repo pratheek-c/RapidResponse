@@ -39,6 +39,7 @@ export type HazardInfo = {
 
 export type DashboardIncident = {
   id: string;
+  cad_number: string | null;
   caller_id: string;
   caller_location: string;
   caller_address: string;

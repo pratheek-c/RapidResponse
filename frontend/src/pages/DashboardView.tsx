@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import { Navigate } from "react-router-dom";
+import { AlertTriangle } from "lucide-react";
 import { Header } from "@/components/common/Header";
 import { MapLegend } from "@/components/map/MapLegend";
 import { CommandMap } from "@/components/map/CommandMap";
@@ -8,8 +9,10 @@ import { IncidentDetail } from "@/components/incidents/IncidentDetail";
 import { useAuth } from "@/hooks/useAuth";
 import { useIncidents } from "@/hooks/useIncidents";
 import { useUnits } from "@/hooks/useUnits";
+import { useDispatcherLocation } from "@/hooks/useDispatcherLocation";
+import { filterIncidentsByTab, type Filter } from "@/utils/incidentFilters";
 import type { DashboardIncident } from "@/types/dashboard";
-
+import { DEFAULT_MAP_CENTER } from "@/config/constants";
 // ---------------------------------------------------------------------------
 // Stats bar tile
 // ---------------------------------------------------------------------------
@@ -159,11 +162,138 @@ function NoSelectionPanel({
 // Main dashboard view
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Distance calculation and Active Incident Ticker
+// ---------------------------------------------------------------------------
+
+function getDistanceKM(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const p = 0.017453292519943295; // Math.PI / 180
+  const c = Math.cos;
+  const a = 0.5 - c((lat2 - lat1) * p)/2 +
+            c(lat1 * p) * c(lat2 * p) *
+            (1 - c((lon2 - lon1) * p))/2;
+  return 12742 * Math.asin(Math.sqrt(a)); // 2 * R; R = 6371 km
+}
+
+function IncidentTicker({
+  incidents,
+  onSelect,
+}: {
+  incidents: DashboardIncident[];
+  onSelect: (id: string) => void;
+}) {
+  const activeNearby = useMemo(() => {
+    return incidents.filter(i => {
+      if (i.status === "completed" || i.status === "resolved" || i.status === "cancelled") return false;
+      const dist = getDistanceKM(DEFAULT_MAP_CENTER[0], DEFAULT_MAP_CENTER[1], i.location.lat, i.location.lng);
+      return dist <= 10;
+    });
+  }, [incidents]);
+
+  if (activeNearby.length === 0) return null;
+
+  // Duplicate items for seamless continuous scrolling
+  const tickerItems = [...activeNearby, ...activeNearby, ...activeNearby, ...activeNearby];
+
+  return (
+    <div className="flex w-full items-center overflow-hidden border-b border-slate-800 bg-slate-950 px-2 py-1.5 text-xs">
+      <div className="mr-3 flex shrink-0 items-center gap-1.5 rounded bg-red-950/50 px-2 py-0.5 font-bold uppercase tracking-widest text-red-400">
+        <AlertTriangle className="h-3 w-3 animate-pulse" />
+        Live Feed (10km)
+      </div>
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex shrink-0 animate-ticker items-center gap-6 whitespace-nowrap">
+          {tickerItems.map((inc, i) => (
+            <button
+              key={`${inc.id}-${i}`}
+              onClick={() => onSelect(inc.id)}
+              className="flex items-center gap-2 transition-colors hover:text-blue-300"
+            >
+              <span className={`font-mono font-bold ${inc.priority === 'P1' ? 'text-red-400' : 'text-slate-300'}`}>
+                {inc.cad_number || inc.id.split('-').pop()?.toUpperCase()}
+              </span>
+              <span className="text-slate-600">·</span>
+              <span className="text-slate-200 capitalize">{inc.type || 'unknown'} — {inc.caller_address || inc.caller_location}</span>
+              <span className="text-slate-500">
+                ({getDistanceKM(DEFAULT_MAP_CENTER[0], DEFAULT_MAP_CENTER[1], inc.location.lat, inc.location.lng).toFixed(1)}km)
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function playP1Tone() {
+  try {
+    const ctx = new AudioContext();
+    const gainNode = ctx.createGain();
+    gainNode.gain.setValueAtTime(0.18, ctx.currentTime);
+    gainNode.connect(ctx.destination);
+
+    function playTone(freq: number, start: number, duration: number) {
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+      osc.connect(gainNode);
+      osc.start(ctx.currentTime + start);
+      osc.stop(ctx.currentTime + start + duration);
+    }
+
+    playTone(880, 0, 0.3);
+    playTone(660, 0.35, 0.3);
+
+    // Close context after tones finish
+    setTimeout(() => void ctx.close(), 1000);
+  } catch {
+    // AudioContext unavailable — silently ignore
+  }
+}
+
 export function DashboardView() {
   const { user, loading, isAuthenticated, department, signOut } = useAuth();
   const { incidents, connected } = useIncidents();
   const { units } = useUnits();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const seenIds = useRef<Set<string>>(new Set());
+
+  // Feature 2: shared filter state lifted from IncidentList
+  const [mapFilter, setMapFilter] = useState<Filter>("active");
+  const mapIncidents = useMemo(
+    () => filterIncidentsByTab(incidents, mapFilter),
+    [incidents, mapFilter]
+  );
+
+  // Feature 1: dispatcher live location + OSRM route info
+  const dispatcherLocation = useDispatcherLocation();
+  const [routeInfo, setRouteInfo] = useState<{
+    distanceMeters: number;
+    durationSeconds: number;
+  } | null>(null);
+
+  // Detect genuinely new P1 incidents and fire alert tone
+  useEffect(() => {
+    for (const incident of incidents) {
+      if (incident.priority === "P1" && !seenIds.current.has(incident.id)) {
+        seenIds.current.add(incident.id);
+        if (
+          incident.status !== "completed" &&
+          incident.status !== "resolved" &&
+          incident.status !== "cancelled"
+        ) {
+          playP1Tone();
+        }
+      } else {
+        seenIds.current.add(incident.id);
+      }
+    }
+  }, [incidents]);
+
+  // Clear route info when incident selection changes
+  useEffect(() => {
+    setRouteInfo(null);
+  }, [selectedId]);
 
   const selectedIncident = useMemo(
     () => incidents.find((incident) => incident.id === selectedId) ?? null,
@@ -197,26 +327,39 @@ export function DashboardView() {
         onSignOut={signOut}
       />
 
+      {/* Horizontal scrolling ticker for nearby active incidents */}
+      <IncidentTicker incidents={incidents} onSelect={setSelectedId} />
+
       <StatsBar incidents={incidents} units={units} connected={connected} />
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: incident list */}
+        {/* Left: incident list — filter state is lifted so the map stays in sync */}
         <div className="hidden w-[300px] shrink-0 overflow-y-auto lg:block">
           <IncidentList
             incidents={incidents}
             selectedId={selectedId}
             onSelect={setSelectedId}
+            filter={mapFilter}
+            onFilterChange={setMapFilter}
           />
         </div>
 
         {/* Centre: map */}
         <section className="flex min-h-0 flex-1 flex-col p-3">
-          <div className="min-h-0 flex-1">
+          <div className="relative min-h-0 flex-1">
+            {/* ETA pill — shown when a route has been calculated */}
+            {routeInfo !== null && (
+              <div className="absolute left-2 top-2 z-[1000] rounded border border-cyan-800 bg-black/80 px-2 py-1 font-mono text-xs text-cyan-400">
+                ● Route: {(routeInfo.distanceMeters / 1000).toFixed(1)} km · ~{Math.ceil(routeInfo.durationSeconds / 60)} min drive
+              </div>
+            )}
             <CommandMap
-              incidents={incidents}
+              incidents={mapIncidents}
               units={units}
               selectedIncidentId={selectedId}
               onSelectIncident={setSelectedId}
+              dispatcherLocation={dispatcherLocation}
+              onRouteInfo={setRouteInfo}
             />
           </div>
         </section>

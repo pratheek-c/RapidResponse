@@ -30,6 +30,7 @@ export type IncidentType =
 
 export type Incident = {
   id: string; // UUID
+  cad_number: string | null; // e.g. INC-20260316-0001
   caller_id: string;
   caller_location: string; // "lat, lng" GPS string
   caller_address: string;  // reverse-geocoded human address

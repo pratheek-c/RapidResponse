@@ -5,14 +5,14 @@ type StatusBadgeProps = {
 };
 
 const statusStyle: Record<IncidentStatus, string> = {
-  active: "bg-red-500/15 text-red-300 ring-red-500/40",
-  classified: "bg-blue-500/15 text-blue-300 ring-blue-500/40",
-  dispatched: "bg-amber-500/15 text-amber-300 ring-amber-500/40",
-  en_route: "bg-blue-500/15 text-blue-300 ring-blue-500/40",
-  on_scene: "bg-violet-500/15 text-violet-300 ring-violet-500/40",
-  completed: "bg-slate-500/15 text-slate-300 ring-slate-500/40",
-  resolved: "bg-slate-500/15 text-slate-300 ring-slate-500/40",
-  cancelled: "bg-slate-700/30 text-slate-400 ring-slate-700/40",
+  active:     "bg-amber-500/20 text-amber-200 ring-amber-500/50",   // amber — needs attention
+  classified: "bg-blue-500/20 text-blue-200 ring-blue-500/50",      // blue — being assessed
+  dispatched: "bg-violet-500/20 text-violet-200 ring-violet-500/50", // indigo/purple — units assigned
+  en_route:   "bg-cyan-500/20 text-cyan-200 ring-cyan-500/50",      // cyan — units moving
+  on_scene:   "bg-emerald-500/20 text-emerald-200 ring-emerald-500/50", // green — units arrived
+  completed:  "bg-slate-500/15 text-slate-300 ring-slate-500/40",   // slate — closed
+  resolved:   "bg-slate-500/15 text-slate-300 ring-slate-500/40",   // slate — closed
+  cancelled:  "bg-red-900/40 text-red-300 ring-red-800/60",         // dark red — cancelled
 };
 
 export function StatusBadge({ status }: StatusBadgeProps) {

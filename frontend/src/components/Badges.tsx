@@ -52,14 +52,14 @@ const STATUS_LABELS: Record<IncidentStatus, string> = {
 };
 
 const STATUS_STYLES: Record<IncidentStatus, { bg: string; color: string; border: string }> = {
-  active:     { bg: "#000000", color: "#ffffff", border: "#000000" },
-  classified: { bg: "#222222", color: "#ffffff", border: "#222222" },
-  dispatched: { bg: "#444444", color: "#ffffff", border: "#444444" },
-  en_route:   { bg: "#555555", color: "#ffffff", border: "#555555" },
-  on_scene:   { bg: "#333333", color: "#ffffff", border: "#333333" },
-  completed:  { bg: "#f0f0f0", color: "#444444", border: "#cccccc" },
-  resolved:   { bg: "#f0f0f0", color: "#666666", border: "#cccccc" },
-  cancelled:  { bg: "#f0f0f0", color: "#999999", border: "#cccccc" },
+  active:     { bg: "#78350f", color: "#fde68a", border: "#d97706" },   // amber — needs attention
+  classified: { bg: "#1e3a5f", color: "#93c5fd", border: "#2563eb" },   // blue — being assessed
+  dispatched: { bg: "#2e1065", color: "#c4b5fd", border: "#7c3aed" },   // indigo/purple — units assigned
+  en_route:   { bg: "#0c3347", color: "#67e8f9", border: "#0891b2" },   // cyan — units moving
+  on_scene:   { bg: "#14532d", color: "#86efac", border: "#16a34a" },   // green — units arrived
+  completed:  { bg: "#1e293b", color: "#94a3b8", border: "#475569" },   // slate — closed
+  resolved:   { bg: "#1e293b", color: "#94a3b8", border: "#475569" },   // slate — closed
+  cancelled:  { bg: "#450a0a", color: "#fca5a5", border: "#991b1b" },   // dark red — cancelled
 };
 
 export function StatusBadge({ status }: { status: IncidentStatus }) {

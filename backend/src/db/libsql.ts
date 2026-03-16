@@ -63,14 +63,25 @@ export async function dbCreateIncident(
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
 
+  // Generate CAD number: INC-YYYYMMDD-NNNN (sequential per day)
+  const today = now.slice(0, 10).replace(/-/g, ""); // "YYYYMMDD"
+  const countResult = await db.execute({
+    sql: "SELECT COUNT(*) as cnt FROM incidents WHERE DATE(created_at) = DATE('now')",
+    args: {},
+  });
+  const todayCount = Number((countResult.rows[0] as Record<string, unknown>)["cnt"] ?? 0);
+  const seq = (todayCount + 1).toString().padStart(4, "0");
+  const cad_number = `INC-${today}-${seq}`;
+
   await db.execute({
     sql: `INSERT INTO incidents
-            (id, caller_id, caller_location, caller_address, status, type, priority, summary,
+            (id, cad_number, caller_id, caller_location, caller_address, status, type, priority, summary,
              created_at, updated_at, resolved_at, s3_audio_prefix, s3_transcript_key)
-          VALUES (:id, :caller_id, :caller_location, :caller_address, 'active', NULL, NULL, NULL,
+          VALUES (:id, :cad_number, :caller_id, :caller_location, :caller_address, 'active', NULL, NULL, NULL,
                   :created_at, :updated_at, NULL, NULL, NULL)`,
     args: {
       id,
+      cad_number,
       caller_id: input.caller_id,
       caller_location: input.caller_location,
       caller_address: input.caller_address,
@@ -357,6 +368,7 @@ export async function dbGetDispatchesForIncident(
 function rowToIncident(row: Record<string, unknown>): Incident {
   return {
     id: row["id"] as string,
+    cad_number: (row["cad_number"] as string) ?? null,
     caller_id: row["caller_id"] as string,
     caller_location: row["caller_location"] as string,
     caller_address: (row["caller_address"] as string) ?? "",

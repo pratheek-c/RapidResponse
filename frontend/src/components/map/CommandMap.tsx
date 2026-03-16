@@ -5,6 +5,8 @@ import { DEFAULT_MAP_CENTER, DEFAULT_MAP_ZOOM } from "@/config/constants";
 import type { DashboardIncident, DashboardUnit } from "@/types/dashboard";
 import { IncidentMarker } from "@/components/map/IncidentMarker";
 import { UnitMarker } from "@/components/map/UnitMarker";
+import { DispatcherMarker } from "@/components/map/DispatcherMarker";
+import { RoutePolyline } from "@/components/map/RoutePolyline";
 
 const ARCGIS_API_KEY = import.meta.env.VITE_ARCGIS_API_KEY as string | undefined;
 
@@ -62,14 +64,25 @@ function MapFocus({ selectedIncident }: { selectedIncident: DashboardIncident | 
 // ---------------------------------------------------------------------------
 // CommandMap
 // ---------------------------------------------------------------------------
+type LatLng = { lat: number; lng: number };
+
 type CommandMapProps = {
   incidents: DashboardIncident[];
   units: DashboardUnit[];
   selectedIncidentId: string | null;
   onSelectIncident: (incidentId: string) => void;
+  dispatcherLocation?: LatLng | null;
+  onRouteInfo?: (info: { distanceMeters: number; durationSeconds: number } | null) => void;
 };
 
-export function CommandMap({ incidents, units, selectedIncidentId, onSelectIncident }: CommandMapProps) {
+export function CommandMap({
+  incidents,
+  units,
+  selectedIncidentId,
+  onSelectIncident,
+  dispatcherLocation,
+  onRouteInfo,
+}: CommandMapProps) {
   const selectedIncident = incidents.find((i) => i.id === selectedIncidentId) ?? null;
 
   return (
@@ -94,6 +107,21 @@ export function CommandMap({ incidents, units, selectedIncidentId, onSelectIncid
         {units.map((unit) => (
           <UnitMarker key={unit.id} unit={unit} />
         ))}
+        {dispatcherLocation != null && (
+          <DispatcherMarker
+            position={[dispatcherLocation.lat, dispatcherLocation.lng]}
+          />
+        )}
+        {dispatcherLocation != null && selectedIncident != null && (
+          <RoutePolyline
+            from={dispatcherLocation}
+            to={{
+              lat: selectedIncident.location.lat,
+              lng: selectedIncident.location.lng,
+            }}
+            onRouteInfo={onRouteInfo ?? (() => {})}
+          />
+        )}
       </MapContainer>
     </div>
   );

@@ -193,7 +193,15 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
   const [qaEntries, setQaEntries] = useState<QAEntry[]>([]);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const { lastEvent } = useSSE();
+
+  // Auto-dismiss action error after 6 seconds
+  useEffect(() => {
+    if (!actionError) return;
+    const t = setTimeout(() => setActionError(null), 6000);
+    return () => clearTimeout(t);
+  }, [actionError]);
 
   // Auto-append new transcript lines from SSE
   useEffect(() => {
@@ -278,15 +286,22 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
   }
 
   async function handleAccept() {
-    await fetch(`${API_BASE}/dispatch/accept`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        incident_id: incident.id,
-        unit_ids: selectedUnitIds,
-        officer_id: officerId,
-      }),
-    });
+    try {
+      const res = await fetch(`${API_BASE}/dispatch/accept`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          incident_id: incident.id,
+          unit_ids: selectedUnitIds,
+          officer_id: officerId,
+        }),
+      });
+      if (!res.ok) throw new Error(`Server responded ${res.status}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setActionError(`Action failed — please retry or contact supervisor. ${msg}`);
+      throw err; // re-throw so ActionButtons can show its own toast
+    }
   }
 
   async function handleAsk(question: string) {
@@ -299,25 +314,39 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
   }
 
   async function handleEscalate() {
-    const requested = assignedDepartments.length > 0 ? assignedDepartments : ["patrol", "medical"];
-    await fetch(`${API_BASE}/dispatch/escalate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        incident_id: incident.id,
-        reason: "Dispatcher escalation from DECC dashboard",
-        requested_unit_types: requested,
-      }),
-    });
+    try {
+      const requested = assignedDepartments.length > 0 ? assignedDepartments : ["patrol", "medical"];
+      const res = await fetch(`${API_BASE}/dispatch/escalate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          incident_id: incident.id,
+          reason: "Dispatcher escalation from DECC dashboard",
+          requested_unit_types: requested,
+        }),
+      });
+      if (!res.ok) throw new Error(`Server responded ${res.status}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setActionError(`Action failed — please retry or contact supervisor. ${msg}`);
+      throw err;
+    }
   }
 
   async function handleComplete() {
-    const response = await fetch(`${API_BASE}/dispatch/complete`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ incident_id: incident.id }),
-    });
-    if (response.ok) setSummaryOpen(true);
+    try {
+      const response = await fetch(`${API_BASE}/dispatch/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ incident_id: incident.id }),
+      });
+      if (!response.ok) throw new Error(`Server responded ${response.status}`);
+      setSummaryOpen(true);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setActionError(`Action failed — please retry or contact supervisor. ${msg}`);
+      throw err;
+    }
   }
 
   async function handleSaveReport(summary: string) {
@@ -357,7 +386,7 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
 
         <div className="flex flex-col items-center">
           <p className="font-mono text-[10px] font-bold text-slate-400">
-            #{incident.id.slice(0, 8).toUpperCase()}
+            {incident.cad_number ?? `#${incident.id.slice(0, 8).toUpperCase()}`}
           </p>
           <p className="text-[9px] text-slate-600">Opened {openedAt}</p>
         </div>
@@ -444,12 +473,19 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
             incidentLng={incident.location.lng}
           />
 
+          {actionError && (
+            <div className="mt-2 rounded-md border border-red-700/60 bg-red-950/60 px-3 py-2 text-xs font-medium text-red-200">
+              {actionError}
+            </div>
+          )}
+
           <div className="mt-3">
             <ActionButtons
               onAccept={handleAccept}
               onEscalate={handleEscalate}
               onComplete={handleComplete}
               incidentStatus={incident.status}
+              selectedUnitIds={selectedUnitIds}
             />
           </div>
         </div>
