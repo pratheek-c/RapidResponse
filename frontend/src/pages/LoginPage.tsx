@@ -45,7 +45,7 @@ export function LoginPage() {
             RapidResponse Command
           </span>
         </div>
-        <p className="text-xs text-slate-500">Springfield Emergency Communications Center</p>
+        <p className="text-xs text-slate-500">Dublin Emergency Communications Centre</p>
       </div>
 
       {/* Login card */}
