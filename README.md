@@ -72,7 +72,7 @@ rapidresponse/
 │       │   ├── recordings.ts
 │       │   └── mockRoute.ts
 │       ├── ws/callHandler.ts
-│       ├── db/
+        │       ├── db/
 │       │   ├── libsql.ts
 │       │   ├── lancedb.ts
 │       │   └── migrations/
@@ -81,24 +81,59 @@ rapidresponse/
 │       │       ├── 003_add_caller_address.sql
 │       │       ├── 004_dispatch_tables.sql
 │       │       ├── 005_fix_units_fk.sql
-│       │       └── 006_fix_transcription_dispatches_fk.sql
+│       │       ├── 006_fix_transcription_dispatches_fk.sql
+│       │       ├── 007_add_cad_number.sql
+│       │       ├── 008_add_covert_distress.sql
+│       │       └── 009_roles.sql
 │       └── types/index.ts
 └── frontend/
     └── src/
         ├── types/index.ts
+        ├── context/
+        │   └── SessionContext.tsx
         ├── hooks/
+        │   ├── useAuth.ts
         │   ├── useCallerInfo.ts
         │   ├── useCallSocket.ts
+        │   ├── useDispatcherLocation.ts
         │   ├── useIncidents.ts
+        │   ├── useSSE.ts
         │   └── useUnits.ts
         ├── components/
-        │   ├── Badges.tsx
-        │   ├── IncidentList.tsx
-        │   ├── IncidentDetail.tsx
-        │   └── UnitPanel.tsx
+        │   ├── common/
+        │   │   ├── AssignmentAlertBanner.tsx
+        │   │   ├── BackupAlertBanner.tsx
+        │   │   ├── DeptIcon.tsx
+        │   │   ├── Header.tsx
+        │   │   ├── LiveIndicator.tsx
+        │   │   ├── SeverityBadge.tsx
+        │   │   ├── StatusBadge.tsx
+        │   │   └── TimeAgo.tsx
+        │   ├── dispatch/
+        │   │   ├── ActionButtons.tsx
+        │   │   ├── BackupModal.tsx
+        │   │   ├── QAThread.tsx
+        │   │   ├── QuestionInput.tsx
+        │   │   ├── SummaryModal.tsx
+        │   │   └── UnitSelector.tsx
+        │   ├── incidents/
+        │   │   ├── IncidentCard.tsx
+        │   │   ├── IncidentDetail.tsx
+        │   │   └── IncidentList.tsx
+        │   ├── map/
+        │   │   ├── CommandMap.tsx
+        │   │   ├── DispatcherMarker.tsx
+        │   │   ├── IncidentMarker.tsx
+        │   │   ├── MapLegend.tsx
+        │   │   ├── RoutePolyline.tsx
+        │   │   └── UnitMarker.tsx
+        │   └── transcript/
+        │       └── LiveTranscript.tsx
         └── pages/
             ├── CallerView.tsx
-            └── DispatcherDashboard.tsx
+            ├── DashboardView.tsx
+            ├── DispatcherDashboard.tsx
+            └── LoginPage.tsx
 ```
 
 ---
@@ -131,13 +166,15 @@ URLs:
 
 | Table | Purpose |
 |---|---|
-| `incidents` | Core incident row with dispatch extension columns (`accepted_at`, `completed_at`, `escalated`, `officer_id`, `assigned_units`) |
+| `incidents` | Core incident row with dispatch extension columns (`accepted_at`, `completed_at`, `escalated`, `officer_id`, `assigned_units`, `cad_number`, `covert_distress`) |
 | `transcription_turns` | Per-turn transcript entries |
 | `units` | Unit roster and status |
 | `dispatches` | Legacy unit dispatch records |
 | `dispatch_actions` | Dispatcher action audit log |
 | `incident_units` | Unit assignment lifecycle per incident |
 | `dispatch_questions` | Dispatcher question/refined question/answer history |
+| `backup_requests` | Unit officer backup request log with alerted/responded unit lists |
+| `active_sessions` | Role-based login sessions (dispatcher or unit_officer) |
 | `schema_migrations` | Migration tracking |
 
 ### Incident statuses
@@ -180,6 +217,9 @@ Core endpoints:
 | `POST` | `/dispatch/escalate` | Escalate incident |
 | `POST` | `/dispatch/complete` | Complete incident |
 | `POST` | `/dispatch/save-report` | Save/generate final close summary |
+| `POST` | `/dispatch/take` | Unit officer self-assigns to an unassigned incident |
+| `POST` | `/dispatch/backup-request` | Unit officer requests backup from nearby available units |
+| `POST` | `/dispatch/backup-respond` | Unit officer responds to an open backup request |
 | `GET` | `/protocols/search` | RAG search |
 | `GET` | `/recordings/:incident_id/audio` | Audio prefix |
 | `GET` | `/recordings/:incident_id/playback` | Presigned audio URL |
@@ -189,6 +229,24 @@ Core endpoints:
 | `GET` | `/health` | Health check |
 
 For full contracts and payloads see `docs/api-reference.md`.
+
+---
+
+## Testing
+
+```bash
+bun test
+```
+
+92 tests, 0 failures across 5 suites:
+
+| Suite | Tests | Notes |
+|---|---|---|
+| `smoke.test.ts` | 47 | Full HTTP + WebSocket + SSE integration smoke suite |
+| `db.migrations.test.ts` | varies | Migration sequencing and schema verification |
+| `novaAgent.test.ts` | varies | Nova Sonic session and tool-call mocking |
+| `routes.test.ts` | varies | REST route contract tests |
+| `services.test.ts` | varies | Service layer unit tests |
 
 ---
 

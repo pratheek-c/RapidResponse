@@ -50,7 +50,8 @@ Bun Backend (server.ts)
 
 Persistence
   - libSQL: incidents, transcription_turns, units, dispatches,
-            dispatch_actions, incident_units, dispatch_questions
+            dispatch_actions, incident_units, dispatch_questions,
+            backup_requests, active_sessions
   - LanceDB: protocols, incidents_history, locations
   - S3: recordings/{incident_id}/audio_*.webm + transcript.json
 ```
@@ -157,10 +158,12 @@ Important runtime details:
 ### `db/libsql.ts`
 
 Expanded DB helpers now include:
-- Incident dispatch-column updates (`accepted_at`, `completed_at`, `escalated`, `officer_id`, `assigned_units`)
+- Incident dispatch-column updates (`accepted_at`, `completed_at`, `escalated`, `officer_id`, `assigned_units`, `cad_number`, `covert_distress`)
 - `dbCreateDispatchAction`, `dbGetDispatchActions`
 - `dbCreateIncidentUnit`, `dbListIncidentUnits`
 - `dbCreateDispatchQuestion`, `dbUpdateDispatchQuestion`, `dbGetDispatchQuestions`
+- `dbCreateBackupRequest`, `dbGetOpenBackupRequestForIncident`, `dbAddBackupResponder`
+- `dbGetUnit`
 
 ---
 
@@ -207,6 +210,13 @@ The dashboard consumes events from `GET /events`. Two event families coexist:
 - `status_change`
 - `escalation_suggestion`
 - `incident_completed`
+- `transcript_annotation` — colored inline pill emitted on tool call events (classify=blue, dispatch=cyan, question=yellow, covert_distress=red)
+- `assignment_suggested` — emitted by `autoAssign()` in `novaAgent.ts` targeting a specific unit
+- `unit_auto_dispatched` — emitted by `autoAssign()` when Nova Sonic auto-dispatches a unit
+- `backup_requested` — emitted by `POST /dispatch/backup-request`
+- `backup_accepted` — emitted by `POST /dispatch/backup-respond`
+- `covert_distress` — emitted when Nova Sonic sets the `covert_distress` flag on an incident
+- `unit_status_change` — unit availability change notification
 
 Payload highlights:
 - `transcript_update`: `{ incident_id, role: "caller"|"ai", text, timestamp }`
@@ -227,20 +237,34 @@ Payload highlights:
 4. `004_dispatch_tables.sql`
 5. `005_fix_units_fk.sql`
 6. `006_fix_transcription_dispatches_fk.sql`
+7. `007_add_cad_number.sql`
+8. `008_add_covert_distress.sql`
+9. `009_roles.sql`
 
 ### `incidents` (expanded)
 
 New status domain:
 - `active`, `classified`, `dispatched`, `en_route`, `on_scene`, `completed`, `resolved`, `cancelled`
 
-Added columns:
+Added columns (migrations 001–006):
 - `accepted_at` (TEXT)
 - `completed_at` (TEXT)
 - `escalated` (INTEGER 0/1)
 - `officer_id` (TEXT)
 - `assigned_units` (TEXT JSON array)
 
-### New dispatch tables
+Added columns (migrations 007–008):
+- `cad_number` (TEXT) — human-readable CAD number, format `INC-YYYYMMDD-NNNN`
+- `covert_distress` (INTEGER NOT NULL DEFAULT 0) — set to 1 by Nova Sonic when silent distress is detected; indexed
+
+### New role-based tables (migration 009)
+
+| Table | Purpose |
+|---|---|
+| `backup_requests` | Unit officer backup request log — fields: `id`, `incident_id`, `requesting_unit`, `requested_types` (JSON), `urgency` (`routine\|urgent\|emergency`), `message`, `alerted_units` (JSON), `responded_units` (JSON), `created_at` |
+| `active_sessions` | Active role-based login sessions — fields: `id`, `user_id`, `role` (`dispatcher\|unit_officer`), `unit_id` (NULL for dispatchers), `station_id` (NULL for unit officers), `logged_in_at`, `last_heartbeat` |
+
+### New dispatch tables (migrations 004–006)
 
 | Table | Purpose |
 |---|---|

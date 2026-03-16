@@ -78,7 +78,7 @@ rapidresponse/
 │       │   ├── recordings.ts
 │       │   └── mockRoute.ts
 │       ├── ws/callHandler.ts
-│       └── db/
+        │       └── db/
 │           ├── libsql.ts
 │           ├── lancedb.ts
 │           └── migrations/
@@ -87,23 +87,58 @@ rapidresponse/
 │               ├── 003_add_caller_address.sql
 │               ├── 004_dispatch_tables.sql
 │               ├── 005_fix_units_fk.sql
-│               └── 006_fix_transcription_dispatches_fk.sql
+│               ├── 006_fix_transcription_dispatches_fk.sql
+│               ├── 007_add_cad_number.sql
+│               ├── 008_add_covert_distress.sql
+│               └── 009_roles.sql
 └── frontend/
     └── src/
         ├── types/index.ts
+        ├── context/
+        │   └── SessionContext.tsx
         ├── hooks/
+        │   ├── useAuth.ts
         │   ├── useCallerInfo.ts
         │   ├── useCallSocket.ts
+        │   ├── useDispatcherLocation.ts
         │   ├── useIncidents.ts
+        │   ├── useSSE.ts
         │   └── useUnits.ts
         ├── components/
-        │   ├── Badges.tsx
-        │   ├── IncidentList.tsx
-        │   ├── IncidentDetail.tsx
-        │   └── UnitPanel.tsx
+        │   ├── common/
+        │   │   ├── AssignmentAlertBanner.tsx
+        │   │   ├── BackupAlertBanner.tsx
+        │   │   ├── DeptIcon.tsx
+        │   │   ├── Header.tsx
+        │   │   ├── LiveIndicator.tsx
+        │   │   ├── SeverityBadge.tsx
+        │   │   ├── StatusBadge.tsx
+        │   │   └── TimeAgo.tsx
+        │   ├── dispatch/
+        │   │   ├── ActionButtons.tsx
+        │   │   ├── BackupModal.tsx
+        │   │   ├── QAThread.tsx
+        │   │   ├── QuestionInput.tsx
+        │   │   ├── SummaryModal.tsx
+        │   │   └── UnitSelector.tsx
+        │   ├── incidents/
+        │   │   ├── IncidentCard.tsx
+        │   │   ├── IncidentDetail.tsx
+        │   │   └── IncidentList.tsx
+        │   ├── map/
+        │   │   ├── CommandMap.tsx
+        │   │   ├── DispatcherMarker.tsx
+        │   │   ├── IncidentMarker.tsx
+        │   │   ├── MapLegend.tsx
+        │   │   ├── RoutePolyline.tsx
+        │   │   └── UnitMarker.tsx
+        │   └── transcript/
+        │       └── LiveTranscript.tsx
         └── pages/
             ├── CallerView.tsx
-            └── DispatcherDashboard.tsx
+            ├── DashboardView.tsx
+            ├── DispatcherDashboard.tsx
+            └── LoginPage.tsx
 ```
 
 ---
@@ -141,18 +176,23 @@ Migration order currently:
 4. `004_dispatch_tables`
 5. `005_fix_units_fk`
 6. `006_fix_transcription_dispatches_fk`
+7. `007_add_cad_number`
+8. `008_add_covert_distress`
+9. `009_roles`
 
 Schema overview:
 
 | Table | Purpose |
 |---|---|
-| `incidents` | Core incident record + dispatch extension columns |
+| `incidents` | Core incident record + dispatch extension columns (`cad_number`, `covert_distress` added) |
 | `transcription_turns` | Per-turn transcript storage |
 | `units` | Unit fleet state |
 | `dispatches` | Legacy dispatch lifecycle rows |
 | `dispatch_actions` | Dispatcher action audit log |
 | `incident_units` | Units assigned to incidents |
 | `dispatch_questions` | Dispatcher Q&A history |
+| `backup_requests` | Unit officer backup requests with alerted/responded unit lists |
+| `active_sessions` | Role-based login sessions (dispatcher or unit_officer) |
 | `schema_migrations` | Migration tracking |
 
 ---
@@ -199,6 +239,16 @@ Backend-only:
 ```bash
 bun test --filter backend
 ```
+
+Current status: **92 tests, 0 failures** across 5 suites:
+
+| Suite | Notes |
+|---|---|
+| `smoke.test.ts` | 47-test HTTP + WebSocket + SSE integration smoke suite |
+| `db.migrations.test.ts` | Migration sequencing and schema verification |
+| `novaAgent.test.ts` | Nova Sonic session and tool-call mocking |
+| `routes.test.ts` | REST route contract tests |
+| `services.test.ts` | Service layer unit tests |
 
 ---
 

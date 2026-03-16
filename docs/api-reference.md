@@ -338,6 +338,107 @@ Behavior:
 
 ---
 
+#### `POST /dispatch/take`
+
+Unit officer self-assigns to an unassigned incident.
+
+Requires `role: "unit_officer"`. Returns `403` if `role` is `"dispatcher"`.
+
+Body:
+
+```json
+{
+  "incident_id": "...",
+  "unit_id": "...",
+  "role": "unit_officer"
+}
+```
+
+Constraints:
+- Unit must have status `available` (or `on_duty`)
+- Incident must have no currently assigned units
+
+Response `201`:
+
+```json
+{ "ok": true, "data": { "status": "dispatched", "dispatch_message": "..." } }
+```
+
+Effects:
+- updates incident (`status=dispatched`, `accepted_at`, `assigned_units`)
+- updates unit status to `dispatched`
+- inserts `incident_units` record
+- injects dispatch message into active Nova Sonic session (non-fatal)
+- emits SSE `unit_dispatched` and `status_change`
+
+---
+
+#### `POST /dispatch/backup-request`
+
+Unit officer requests backup from nearby available units.
+
+Requires `role: "unit_officer"`. The `requesting_unit` must be assigned to the incident.
+
+Body:
+
+```json
+{
+  "incident_id": "...",
+  "requesting_unit": "unit-id",
+  "requested_types": ["patrol", "medical"],
+  "urgency": "urgent",
+  "message": "Optional message for responding units",
+  "role": "unit_officer"
+}
+```
+
+`urgency` values: `routine | urgent | emergency`
+
+Response `201`:
+
+```json
+{ "ok": true, "data": { "status": "alert_sent", "alerted_units": ["unit-a", "unit-b"] } }
+```
+
+Effects:
+- creates `backup_requests` row with alerted unit IDs
+- logs action (`escalate`)
+- emits SSE `backup_requested` to all connected clients
+
+---
+
+#### `POST /dispatch/backup-respond`
+
+Unit officer responds to an open backup request for an incident.
+
+Requires `role: "unit_officer"`.
+
+Body:
+
+```json
+{
+  "incident_id": "...",
+  "responding_unit": "unit-id",
+  "role": "unit_officer"
+}
+```
+
+Response `201`:
+
+```json
+{ "ok": true, "data": { "status": "responding", "incident_id": "..." } }
+```
+
+Effects:
+- inserts or updates `incident_units` for the responding unit
+- updates unit status to `dispatched`
+- appends responding unit to incident `assigned_units`
+- updates `backup_requests.responded_units`
+- emits SSE `backup_accepted` and `status_change`
+- injects "Additional units are en route" message into Nova Sonic (non-fatal)
+
+---
+
 ## Protocols
 
 ### `GET /protocols/search?q=&limit=`
@@ -409,19 +510,41 @@ Dashboard shape (`pushSSE`):
 }
 ```
 
-### Dashboard event types (9)
+### Dashboard event types
 
 | Event | Payload |
 |---|---|
 | `incident_created` | `{ incident_id, created_at }` |
 | `incident_classified` | `{ incident_id, incident_type, priority }` |
-| `transcript_update` | `{ incident_id, role: "caller"|"ai", text, timestamp }` |
+| `transcript_update` | `{ incident_id, role: "caller"\|"ai", text, timestamp }` |
 | `extraction_update` | `{ incident_id, extraction }` |
 | `answer_update` | `{ incident_id, question, answer }` |
 | `unit_dispatched` | `{ incident_id, unit_id, unit_type }` |
 | `status_change` | `{ incident_id, status, unit_id? }` |
 | `escalation_suggestion` | `{ incident_id, reason, suggested_units }` |
 | `incident_completed` | `{ incident_id, summary }` |
+| `transcript_annotation` | `{ incident_id, icon, label, color }` |
+| `assignment_suggested` | `{ incident_id, suggested_unit, unit_type, distance_km, priority }` |
+| `unit_auto_dispatched` | `{ incident_id, unit_id, unit_type, auto: true }` |
+| `backup_requested` | `{ incident_id, requesting_unit, requested_types, urgency, message, target_units }` |
+| `backup_accepted` | `{ incident_id, responding_unit, responding_unit_type }` |
+| `covert_distress` | `{ incident_id }` |
+| `unit_status_change` | `{ unit_id, status }` |
+
+#### `transcript_annotation` details
+
+Emitted when Nova Sonic tool calls trigger notable events. Rendered as colored inline pills in `LiveTranscript.tsx`.
+
+| Trigger | `icon` | `label` | `color` |
+|---|---|---|---|
+| `classify_incident` tool call | `🚨` | `Incident classified` | `blue` |
+| `dispatch_unit` tool call | `🚔` | `Units dispatched` | `cyan` |
+| `POST /dispatch/question` | `📎` | `Dispatcher asked a question` | `yellow` |
+| Covert distress detected | `⚠️` | `Covert distress detected` | `red` |
+
+#### `assignment_suggested` / `unit_auto_dispatched`
+
+Emitted by `autoAssign()` in `novaAgent.ts` when Nova Sonic fires the `dispatch_unit` tool and the system identifies a nearby available unit. `unit_auto_dispatched` carries `auto: true` to distinguish from manual dispatch.
 
 ### Legacy event types still present
 
@@ -487,7 +610,9 @@ Endpoint: `WS /call`
 | `201` | Created |
 | `204` | CORS preflight |
 | `400` | Invalid request body/params |
+| `403` | Forbidden (role guard — wrong role or not assigned to incident) |
 | `404` | Resource not found |
 | `405` | Method not allowed |
+| `409` | Conflict (e.g. unit not available, incident already has units) |
 | `426` | WS upgrade required |
 | `500` | Server/internal failure |

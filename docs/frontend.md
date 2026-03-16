@@ -51,18 +51,23 @@ frontend/src/
 │   ├── constants.ts
 │   ├── firebase.ts        # Firebase app + auth + Google provider
 │   └── mapStyles.ts
+├── context/
+│   └── SessionContext.tsx # Role-based session state (role, unit, station)
 ├── types/
 │   ├── index.ts
 │   └── dashboard.ts       # Department, IncidentStatus, SSE event types, etc.
 ├── hooks/
-│   ├── useAuth.ts         # Firebase auth state, department selection, sign-in/out
+│   ├── useAuth.ts         # Firebase auth state, sign-in/out
 │   ├── useCallerInfo.ts
 │   ├── useCallSocket.ts
+│   ├── useDispatcherLocation.ts
 │   ├── useIncidents.ts
-│   ├── useSSE.ts
+│   ├── useSSE.ts          # Dedicated SSE hook (annotation accumulation)
 │   └── useUnits.ts
 ├── components/
 │   ├── common/
+│   │   ├── AssignmentAlertBanner.tsx  # Unit officer assignment/auto-dispatch alerts
+│   │   ├── BackupAlertBanner.tsx      # Unit officer backup request alerts
 │   │   ├── DeptIcon.tsx       # Icon per Department (patrol/fire/medical/hazmat)
 │   │   ├── Header.tsx         # Dashboard top bar with live indicator + sign-out
 │   │   ├── LiveIndicator.tsx
@@ -71,6 +76,7 @@ frontend/src/
 │   │   └── TimeAgo.tsx
 │   ├── dispatch/
 │   │   ├── ActionButtons.tsx
+│   │   ├── BackupModal.tsx    # Modal for unit officers to request backup
 │   │   ├── QAThread.tsx
 │   │   ├── QuestionInput.tsx
 │   │   ├── SummaryModal.tsx
@@ -81,15 +87,18 @@ frontend/src/
 │   │   └── IncidentList.tsx
 │   ├── map/
 │   │   ├── CommandMap.tsx
+│   │   ├── DispatcherMarker.tsx
 │   │   ├── IncidentMarker.tsx
 │   │   ├── MapLegend.tsx
+│   │   ├── RoutePolyline.tsx
 │   │   └── UnitMarker.tsx
 │   └── transcript/
-│       └── LiveTranscript.tsx
+│       └── LiveTranscript.tsx  # Unified transcript + annotation pill timeline
 └── pages/
     ├── CallerView.tsx
-    ├── DashboardView.tsx
-    └── LoginPage.tsx
+    ├── DashboardView.tsx       # Active dispatcher/unit-officer dashboard
+    ├── DispatcherDashboard.tsx # Legacy dispatcher dashboard (kept for compatibility)
+    └── LoginPage.tsx           # Two-step auth: Google sign-in → role selector
 ```
 
 ---
@@ -107,7 +116,7 @@ frontend/src/
 
 ## Authentication
 
-Authentication is handled via Firebase Auth with Google SSO.
+Authentication uses a two-step flow: Google SSO → role selection.
 
 **Config:** `frontend/src/config/firebase.ts`
 - Reads `VITE_FIREBASE_*` env vars at build time
@@ -116,17 +125,29 @@ Authentication is handled via Firebase Auth with Google SSO.
 
 **Hook:** `frontend/src/hooks/useAuth.ts`
 - `isAuthenticated` — `true` when Firebase reports a signed-in user
-- `department` — persisted to `localStorage` under `rr_dispatch_department`
-- `setDepartment(dept)` — updates state and localStorage
 - `signInWithGoogle()` — opens Google sign-in popup
+- `signInDev()` — available in DEV mode to skip Firebase auth
 - `signOut()` — signs out from Firebase
 - `hasFirebaseConfig` — forwarded from firebase config
 
+**Session context:** `frontend/src/context/SessionContext.tsx`
+- `session` — persisted to `localStorage` under `rr_session`
+- Shape: `{ user: { id, name, email, avatar }, role: "dispatcher"|"unit_officer", unit?: { id, type, label }, station?: { id, name } }`
+- `setSession(session)` — stores session and updates state
+- `clearSession()` — removes session on sign-out
+
 **Login page flow (`frontend/src/pages/LoginPage.tsx`):**
-1. If already authenticated, immediately redirects to `/dashboard`
-2. Dispatcher picks department from a 2×2 grid (patrol / fire / medical / hazmat)
-3. "Continue with Google" button is disabled until a department is selected and Firebase is configured
-4. On successful sign-in, navigates to `/dashboard`
+
+Step 1 — Sign in:
+1. If already authenticated with a stored session, immediately redirects to `/dashboard`
+2. "Continue with Google" button triggers `signInWithGoogle()`
+3. In DEV mode a "Skip sign-in" button calls `signInDev()` to bypass Firebase
+
+Step 2 — Role selector (rendered after successful auth, before dashboard entry):
+1. User picks role: **DISPATCHER** (Command Center) or **UNIT OFFICER** (Field Responder)
+2. If **Dispatcher**: selects a station from the dropdown (Dublin Central, Cork Central, Galway Central)
+3. If **Unit Officer**: picks their department tab (Garda/DFB/NAS/Hazmat), then selects an available unit from the live `GET /units?status=available` list
+4. "Enter Dashboard" is enabled once a valid selection is made; clicking it stores the session and navigates to `/dashboard`
 
 **Required env vars for auth:**
 
@@ -143,6 +164,39 @@ Authentication is handled via Firebase Auth with Google SSO.
 
 ## Hooks
 
+### `useSSE`
+
+**File:** `frontend/src/hooks/useSSE.ts`
+
+Dedicated SSE hook that owns the `EventSource` connection. Separates SSE plumbing from incident business logic.
+
+Returns:
+
+```ts
+{
+  connected: boolean;
+  lastEvent: SseEnvelope | null;
+  getAnnotations: (incident_id: string) => TranscriptAnnotation[];
+}
+```
+
+`SseEnvelope` shape: `{ type: DashboardEventType; data: unknown }`
+
+`TranscriptAnnotation` shape: `{ icon: string; label: string; color: string; timestamp: string }`
+
+Handled event types:
+
+| Event | Behavior |
+|---|---|
+| `transcript_annotation` | Accumulates annotation pills keyed by `incident_id` in local state; does NOT set `lastEvent` |
+| All other events | Sets `lastEvent`; consumers filter by type |
+
+### `useDispatcherLocation`
+
+**File:** `frontend/src/hooks/useDispatcherLocation.ts`
+
+Returns live `LatLng | null` from `navigator.geolocation.watchPosition`. Used by `CommandMap` to render the dispatcher's position marker.
+
 ### `useCallSocket`
 
 Manages caller-side WebSocket and audio pipeline.
@@ -156,7 +210,7 @@ Returns include call status, transcript, report, approaching unit, and start/end
 
 ### `useIncidents`
 
-Combines initial REST load with continuous SSE updates.
+Combines initial REST load with continuous SSE updates. Uses `useSSE` internally.
 
 Current return shape:
 
@@ -196,6 +250,50 @@ Fetches units and refreshes periodically for panel state consistency.
 ---
 
 ## Key Components
+
+### `LiveTranscript.tsx`
+
+**File:** `frontend/src/components/transcript/LiveTranscript.tsx`
+
+Renders a unified, chronologically-sorted timeline of transcript lines and annotation pills.
+
+Props:
+
+```ts
+{
+  lines: TranscriptLine[];
+  annotations?: TranscriptAnnotation[];
+}
+```
+
+- `TranscriptLine` — `{ id, role: "caller"|"ai", text, timestamp }`
+- `TranscriptAnnotation` — `{ icon, label, color, timestamp }`
+
+Color classes supported: `blue`, `green`, `yellow`, `cyan`, `red`. Falls back to a slate default.
+
+Auto-scrolls to the bottom on each new item.
+
+### `AssignmentAlertBanner.tsx`
+
+**File:** `frontend/src/components/common/AssignmentAlertBanner.tsx`
+
+Shown in `DashboardView` for **unit officers** only. Listens via `useSSE` for:
+- `assignment_suggested` — shows amber "ASSIGNMENT ALERT" banner; unit officer can click **Accept Assignment** which calls `POST /dispatch/take`
+- `unit_auto_dispatched` — shows red "EMERGENCY AUTO-DISPATCH" banner with a "View Incident" link
+
+Only shows alerts targeted at the current session's unit (`session.unit.id`). Alerts can be dismissed individually.
+
+### `BackupAlertBanner.tsx`
+
+**File:** `frontend/src/components/common/BackupAlertBanner.tsx`
+
+Shown in `DashboardView` for **unit officers** only. Listens for `backup_requested` SSE events. Does not show the alert to the unit that requested backup. Renders urgency-colored banners (`emergency`/`urgent`/`routine`) with an **I'll Respond** button that calls `POST /dispatch/backup-respond`.
+
+### `BackupModal.tsx`
+
+**File:** `frontend/src/components/dispatch/BackupModal.tsx`
+
+Modal dialog for unit officers to request backup on their current incident. Allows selecting unit type(s), urgency level, and an optional message. On submit, calls `POST /dispatch/backup-request`.
 
 ### `Badges.tsx`
 
@@ -266,13 +364,18 @@ Writes from UI:
 - `POST /dispatch/complete`
 - `POST /dispatch/save-report`
 
-### `DispatcherDashboard.tsx`
+### `DashboardView.tsx`
 
-Integrates updated incident hook and incident detail contract:
-- passes `extraction` and `escalation` into `IncidentDetail`
-- dispatch handler calls `POST /dispatch/accept` with `unit_ids[]` and `officer_id`
-- stats reflect broader lifecycle statuses
-- empty-state messaging updated for new workflow
+**File:** `frontend/src/pages/DashboardView.tsx`
+
+Active dispatcher/unit-officer dashboard. Integrates:
+- `useIncidents` + `useUnits` for live data
+- `useSSE` (via `AssignmentAlertBanner` and `BackupAlertBanner`)
+- `useDispatcherLocation` for map marker
+- `AssignmentAlertBanner` and `BackupAlertBanner` rendered at the top of the view
+- Role-aware rendering via `useSession` — unit officers see their unit's incidents; dispatchers see all
+- Passes `extraction` and `escalation` into `IncidentDetail`
+- Stats bar reflects all lifecycle statuses
 
 ---
 
@@ -282,7 +385,7 @@ Integrates updated incident hook and incident detail contract:
 
 Major additions:
 - expanded `IncidentStatus` (8 values)
-- dispatch extension fields on `Incident`
+- dispatch extension fields on `Incident` (`cad_number`, `covert_distress`)
 - extended `SseEventType` set
 - `Department`
 - `DispatchAction`
@@ -292,16 +395,18 @@ Major additions:
 - `EscalationSuggestion`
 - `DashboardSsePayload`
 
-`DashboardSsePayload` union includes:
-- `incident_created`
-- `incident_classified`
-- `transcript_update`
-- `extraction_update`
-- `answer_update`
-- `unit_dispatched`
-- `status_change`
-- `escalation_suggestion`
-- `incident_completed`
+`frontend/src/types/dashboard.ts` adds:
+- `TranscriptLine` — `{ id, role: "caller"|"ai", text, timestamp }`
+- `TranscriptAnnotation` — `{ icon, label, color, timestamp }`
+- `DashboardIncident` — extended incident type for dashboard rendering
+- `SessionData` — `{ user, role: "dispatcher"|"unit_officer", unit?, station? }`
+
+`DashboardSsePayload` union includes all current SSE event payloads:
+- `incident_created`, `incident_classified`, `transcript_update`, `extraction_update`
+- `answer_update`, `unit_dispatched`, `status_change`, `escalation_suggestion`
+- `incident_completed`, `transcript_annotation`, `assignment_suggested`
+- `unit_auto_dispatched`, `backup_requested`, `backup_accepted`
+- `covert_distress`, `unit_status_change`
 
 ---
 

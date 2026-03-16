@@ -893,6 +893,15 @@ async function executeTool(
       case "dispatch_unit": {
         const unit_type = input["unit_type"] as UnitType;
         const result = await dispatchUnit(incident_id, unit_type);
+        pushSSE({
+          type: "transcript_annotation",
+          data: {
+            incident_id,
+            icon: "🚔",
+            label: `Dispatched: ${result.unit.unit_code} (${unit_type})`,
+            color: "green",
+          },
+        });
         return {
           success: true,
           data: {
