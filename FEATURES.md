@@ -36,14 +36,30 @@ A modernized, high-performance UI tailored to the high-stakes environment of eme
 - **Event-Driven UI:** Changes in incident status or transcript additions are instantly pushed via SSE (Server-Sent Events) to the dashboard.
 - **Modal Modularity:** Detailed summaries, transcript reviews, and dispatch decisions are isolated in non-obtrusive modals using React Portals.
 
-## 🧠 4. Multi-Agent Ecosystem
+## 🔄 4. Bidirectional Dispatch Q&A
+
+A groundbreaking feature allowing human dispatchers to guide the AI's active conversational flow without ever speaking.
+
+- **Silent Injection:** Dispatchers type a question in the dashboard, which is injected into the Bedrock Nova Sonic prompt stream mid-call as a high-priority directive.
+- **Natural Solicitation:** The AI smoothly weaves the dispatcher's required question into its ongoing dialogue with the caller.
+- **Automated Extraction:** A background Nova Lite agent continuously analyzes the transcript context window (both agent and caller turns). Once it detects the caller has answered the injected question, it extracts the exact answer and immediately updates the dispatcher's dashboard via SSE.
+
+## 🚓 5. Advanced Unit Coordination
+
+Beyond single-unit dispatching, the platform supports complex multi-unit escalation.
+
+- **Backup Requests:** On-scene units can broadcast structured backup requests specifying urgency (Routine, Urgent, Emergency) and required unit types (e.g., Hazmat, Medical).
+- **Network Alerting:** Available active units within the network receive the alert instantly via SSE.
+- **One-Click Response:** Other units can accept the backup request, automatically updating incident unit rosters, ETA routes, and global status trackers natively.
+
+## 🧠 6. Multi-Agent Ecosystem
 
 The system delegates specialized tasks to specialized AI instances:
 1. **Voice Agent (Nova Sonic 2):** Ingests raw audio (LPCM format), handles the human conversation, and decides when to trigger system tools.
 2. **Report / Extraction Agent (Nova Lite):** Periodically reviews transcript logs to summarize events and extract structured entities (number of suspects, presence of weapons).
-3. **Dispatch Bridge Agent:** Bridges the gap between what the caller is saying and what the human dispatcher needs to know, acting as the intelligent relay.
+3. **Dispatch Bridge Agent:** Bridges the gap between the caller conversation and the dispatcher Q&A, extracting answers using full conversational context.
 
-## 🏗️ 5. Next-Gen Tech Stack
+## 🏗️ 7. Next-Gen Tech Stack
 
 - **Runtime:** Built natively on **Bun** utilizing Bun Workspaces. No Node.js overhead, resulting in blistering fast package management and concurrent startup.
 - **Database Partitioning by Intent:**
@@ -59,4 +75,5 @@ The system delegates specialized tasks to specialized AI instances:
 If walking through the project, ensure observers see:
 1. **The Pizza Pattern:** Dial in and order a pizza. Watch the AI seamlessly transition into "Yes/No" covert questioning.
 2. **The Dashboard Response:** See the UI react instantly via SSE to show a "🤫 COVERT" incident with "No Sirens" instructions.
-3. **The Map Engine:** Highlight the customized ESRI dark basemap and distance calculations rendering live routing connections from the precinct to emergencies.
+3. **Bidirectional Q&A:** During an active call, type a question in the exact incident view and watch the AI smoothly extract and resolve it!
+4. **The Map Engine:** Highlight the customized ESRI dark basemap and distance calculations rendering live routing connections from the precinct to emergencies.
