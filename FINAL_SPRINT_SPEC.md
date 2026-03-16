@@ -911,3 +911,38 @@ HOUR 4:
 - **Timestamps = ISO 8601 strings**
 - **SSE not WebSocket for dashboard.** WebSocket only for `/call`.
 - **The video matters more than perfect code.** If something works 80%, record it and submit.
+
+
+---
+  ❌ Not Done / Missing
+
+  ┌─────┬────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │  #  │          Feature           │                                           What's Missing                                           │
+  ├─────┼────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 1A  │ Auto-assignment on         │ autoAssign() is NOT called after classify_incident fires in novaAgent.ts. Nearest unit lookup +    │
+  │     │ classify                   │ auto-dispatch SSE (unit_auto_dispatched, assignment_suggested) — not wired                         │
+  ├─────┼────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 2E  │ Annotated Live Transcript  │ transcript_annotation SSE events not emitted. LiveTranscript component renders raw lines only — no │
+  │     │                            │  annotation markers (📊 📎 ✅ 🤫)                                                                  │
+  ├─────┼────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 2F  │ Auto-Assignment Alert      │ assignment_suggested / unit_auto_dispatched SSE events not handled in frontend. No alert banner    │
+  │     │ banner                     │ for unit officers                                                                                  │
+  ├─────┼────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 1E  │ transcript_annotation SSE  │ Never pushed anywhere — not after classify, not after dispatch, not after Q&A                      │
+  ├─────┼────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 3C  │ Transcript annotation      │ After classify_incident tool fires, no transcript_annotation SSE is pushed                         │
+  │     │ emissions                  │                                                                                                    │
+  ├─────┼────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 2H  │ SSE hook handles new       │ useSSE doesn't handle transcript_annotation, unit_auto_dispatched, assignment_suggested            │
+  │     │ events                     │                                                                                                    │
+  └─────┴────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  ---
+  Priority order to finish
+
+  1. Annotated transcript — most visible in demo video
+  2. Auto-assignment trigger — calls autoAssign() after classify fires
+  3. Auto-assignment alert banner — unit officer sees the alert
+  4. transcript_annotation SSE — emitted after classify, dispatch, Q&A
+
+  Want me to implement these remaining items?
