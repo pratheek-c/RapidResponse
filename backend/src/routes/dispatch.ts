@@ -31,6 +31,7 @@ import {
 } from "../services/dispatchService.ts";
 import { pushSSE } from "../services/sseService.ts";
 import { injectTextIntoSession } from "../agents/novaAgent.ts";
+import { markDispatcherQuestionPending } from "../ws/callHandler.ts";
 import { refineQuestion, extractAnswer } from "../agents/dispatchBridgeAgent.ts";
 import { updateIncident, getIncident } from "../services/incidentService.ts";
 import { generateCloseSummary } from "../agents/reportAgent.ts";
@@ -105,18 +106,18 @@ export async function handleDispatch(req: Request): Promise<Response> {
       // Inject message into active Nova Sonic session (non-fatal if not active)
       const depts = input.unit_ids.length > 0
         ? (await Promise.all(
-            input.unit_ids.map(async (uid) => {
-              const db = getDb();
-              const { dbGetUnit } = await import("../db/libsql.ts");
-              const unit = await dbGetUnit(db, uid);
-              if (!unit) return null;
-              // Reverse UnitType → Department label
-              const dept = unit.type === "police" ? "patrol"
-                : unit.type === "ems" ? "medical"
+          input.unit_ids.map(async (uid) => {
+            const db = getDb();
+            const { dbGetUnit } = await import("../db/libsql.ts");
+            const unit = await dbGetUnit(db, uid);
+            if (!unit) return null;
+            // Reverse UnitType → Department label
+            const dept = unit.type === "police" ? "patrol"
+              : unit.type === "ems" ? "medical"
                 : unit.type as "fire" | "hazmat";
-              return dept;
-            })
-          )).filter((d): d is NonNullable<typeof d> => d !== null)
+            return dept;
+          })
+        )).filter((d): d is NonNullable<typeof d> => d !== null)
         : [];
       const message = buildDispatchMessage(depts);
       injectTextIntoSession(input.incident_id, message).catch(() => { /* non-fatal */ });
@@ -177,6 +178,10 @@ export async function handleDispatch(req: Request): Promise<Response> {
           console.log(`[dispatch:bg] Refining question via Nova Lite...`);
           const refined = await refineQuestion(input.question, []);
           console.log(`[dispatch:bg] Refined as: "${refined}"`);
+
+          // Flag the next agent turn as a dispatcher-question response so it
+          // renders as a special annotation in the dispatcher transcript.
+          markDispatcherQuestionPending(input.incident_id, refined);
 
           // Inject into active Nova Sonic session
           console.log(`[dispatch:bg] Injecting into Nova Sonic session (caller audio stream)...`);
@@ -382,7 +387,7 @@ export async function handleDispatch(req: Request): Promise<Response> {
       // Build dispatch message and inject into Sonic (non-fatal)
       const dept = unit.type === "police" ? "patrol"
         : unit.type === "ems" ? "medical"
-        : unit.type as "fire" | "hazmat";
+          : unit.type as "fire" | "hazmat";
       const message = buildDispatchMessage([dept]);
       injectTextIntoSession(input.incident_id, message).catch(() => { /* non-fatal */ });
 
@@ -510,7 +515,7 @@ export async function handleDispatch(req: Request): Promise<Response> {
 
       const dept = unit.type === "police" ? "patrol"
         : unit.type === "ems" ? "medical"
-        : unit.type as "fire" | "hazmat";
+          : unit.type as "fire" | "hazmat";
 
       pushSSE({
         type: "backup_accepted",
@@ -524,7 +529,7 @@ export async function handleDispatch(req: Request): Promise<Response> {
       pushSSE({ type: "status_change", data: { incident_id: input.incident_id, status: "dispatched", unit_id: input.responding_unit } });
 
       // Inject Sonic message (non-fatal)
-      injectTextIntoSession(input.incident_id, "Additional units are en route to your location.").catch(() => {});
+      injectTextIntoSession(input.incident_id, "Additional units are en route to your location.").catch(() => { });
 
       return json({ ok: true, data: { status: "responding", incident_id: input.incident_id } }, 201);
     } catch (err) { return jsonError(err, 500); }

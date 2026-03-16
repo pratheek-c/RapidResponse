@@ -1,8 +1,10 @@
+import { useState, useEffect, useMemo } from "react";
 import type { DashboardIncident } from "@/types/dashboard";
 import { SeverityBadge } from "@/components/common/SeverityBadge";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { TimeAgo } from "@/components/common/TimeAgo";
 import { useSession, canTakeIncident } from "@/context/SessionContext";
+
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -63,9 +65,18 @@ function getAssignedUnits(incident: DashboardIncident): string[] {
 }
 
 export function IncidentCard({ incident, selected, onSelect }: IncidentCardProps) {
-  const overdue = isOverdue(incident);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const overdue = useMemo(() => isOverdue(incident), [incident, tick]);
   const borderAccent = priorityBorderClass(incident.priority);
   const { session } = useSession();
+  // ...
+
 
   const isUnitOfficer = session?.role === "unit_officer";
   const myUnitId = session?.unit?.id;

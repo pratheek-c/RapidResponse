@@ -55,13 +55,17 @@ export function IncidentList({
       );
     });
 
-    // Sort: P1 → P2 → P3 → P4 → unprioritised; within same priority newest first
-    result.sort((a, b) => {
-      const pa = a.priority !== null ? (PRIORITY_ORDER[a.priority] ?? 4) : 4;
-      const pb = b.priority !== null ? (PRIORITY_ORDER[b.priority] ?? 4) : 4;
-      if (pa !== pb) return pa - pb;
-      return Date.parse(b.created_at) - Date.parse(a.created_at);
-    });
+    // Active tab: sort newest first for demo; all other tabs sort by priority then newest
+    if (filter === "active") {
+      result.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+    } else {
+      result.sort((a, b) => {
+        const pa = a.priority !== null ? (PRIORITY_ORDER[a.priority] ?? 4) : 4;
+        const pb = b.priority !== null ? (PRIORITY_ORDER[b.priority] ?? 4) : 4;
+        if (pa !== pb) return pa - pb;
+        return Date.parse(b.created_at) - Date.parse(a.created_at);
+      });
+    }
 
     return result;
   }, [filter, incidents, query]);

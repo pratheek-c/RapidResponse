@@ -230,11 +230,11 @@ function buildSystemPrompt(
   const unitsBlock =
     available_units && available_units.length > 0
       ? `\n[AVAILABLE UNITS — sorted by distance from caller]\n${available_units
-          .map(
-            (u) =>
-              `  ${u.unit_code} (${u.type.toUpperCase()}) — Status: ${u.status}, Zone: ${u.zone}, Distance: ${u.distance_km.toFixed(1)} km, ETA: ~${u.eta_minutes} min, Crew: ${u.crew_count}`
-          )
-          .join("\n")}\n[END AVAILABLE UNITS]`
+        .map(
+          (u) =>
+            `  ${u.unit_code} (${u.type.toUpperCase()}) — Status: ${u.status}, Zone: ${u.zone}, Distance: ${u.distance_km.toFixed(1)} km, ETA: ~${u.eta_minutes} min, Crew: ${u.crew_count}`
+        )
+        .join("\n")}\n[END AVAILABLE UNITS]`
       : "";
 
   return `You are a highly efficient, empathetic human agent handling a live 112 emergency call for ${env.DISPATCH_DEPT} in ${env.DISPATCH_CITY}. You are speaking to the caller over a real-time audio connection.
@@ -337,18 +337,36 @@ function encodeChunk(eventType: string, payload: Record<string, unknown>): { chu
 export async function startNovaSession(
   options: NovaSessionOptions
 ): Promise<NovaSession> {
-  const { incident_id, caller_location, caller_address, protocol_context, available_units, callbacks } = options;
+  const { incident_id, caller_location, caller_address, protocol_context, available_units } = options;
+
+  // Deduplication guard: Nova Sonic sends both a TEXT and an AUDIO content block per
+  // response turn. If both blocks end up emitting (due to event ordering edge cases),
+  // this guard suppresses the second identical emission within a 2-second window.
+  const lastEmitted: Record<"caller" | "agent", { text: string; ts: number } | null> = {
+    caller: null,
+    agent: null,
+  };
+  const callbacks: NovaSessionCallbacks = {
+    ...options.callbacks,
+    onTranscript(role, text) {
+      const now = Date.now();
+      const last = lastEmitted[role];
+      if (last && last.text === text && now - last.ts < 2000) return;
+      lastEmitted[role] = { text, ts: now };
+      options.callbacks.onTranscript(role, text);
+    },
+  };
 
   const client = new BedrockRuntimeClient({
     region: env.AWS_REGION,
     ...(env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY
       ? {
-          credentials: {
-            accessKeyId: env.AWS_ACCESS_KEY_ID,
-            secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
-            ...(env.AWS_SESSION_TOKEN ? { sessionToken: env.AWS_SESSION_TOKEN } : {}),
-          },
-        }
+        credentials: {
+          accessKeyId: env.AWS_ACCESS_KEY_ID,
+          secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+          ...(env.AWS_SESSION_TOKEN ? { sessionToken: env.AWS_SESSION_TOKEN } : {}),
+        },
+      }
       : {}),
     requestHandler: new NodeHttp2Handler({
       requestTimeout: 480000, // 8 minutes
@@ -370,10 +388,16 @@ export async function startNovaSession(
   let pendingToolName: string | null = null;
   let pendingToolInput: string = "";
 
-  // Accumulate text per content block to avoid emitting duplicates
-  // Current text block being accumulated from response events
-  // (response contentStart has no contentName, so we track the active block)
-  let currentTextBlock: { role: "caller" | "agent"; text: string } | null = null;
+  // Per-contentName block tracking. Nova Sonic sends both a TEXT block (transcript)
+  // and an AUDIO block (speech) per response. We accumulate each independently so
+  // interleaved events don't corrupt the single-slot approach. Blocks that receive
+  // audioOutput events are audio blocks — their textOutput is speech transcription,
+  // not a separate text turn, and must NOT be emitted as transcript.
+  const activeTextBlocks = new Map<string, { role: "caller" | "agent"; text: string; hasAudio: boolean }>();
+  // Fallback for when Nova Sonic response events omit contentName.
+  // Tracks the key of the most recently opened block so textOutput/audioOutput/contentEnd
+  // can still find it even without a contentName in those events.
+  let currentBlockName: string | null = null;
 
   const promptName = crypto.randomUUID();
   const systemContentName = crypto.randomUUID();
@@ -381,6 +405,8 @@ export async function startNovaSession(
   let audioContentName = crypto.randomUUID();
   const systemPromptText = buildSystemPrompt(incident_id, caller_location, protocol_context, caller_address, available_units);
   console.log(`[nova] system prompt length=${systemPromptText.length} units=${available_units?.length ?? 0}`);
+
+  const lastEmittedText = { caller: "", agent: "" };
 
   async function* buildInputStream() {
     // 1. sessionStart
@@ -533,14 +559,16 @@ export async function startNovaSession(
           incident_id,
           callbacks,
           pendingToolUseId: { get: () => pendingToolUseId, set: (v) => { pendingToolUseId = v; } },
-          pendingToolName:  { get: () => pendingToolName,  set: (v) => { pendingToolName = v; } },
+          pendingToolName: { get: () => pendingToolName, set: (v) => { pendingToolName = v; } },
           pendingToolInput: { get: () => pendingToolInput, set: (v) => { pendingToolInput = v; } },
-          currentTextBlock: { get: () => currentTextBlock, set: (v) => { currentTextBlock = v; } },
+          activeTextBlocks,
+          currentBlockName: { get: () => currentBlockName, set: (v: string | null) => { currentBlockName = v; } },
           sendChunk: async (eventType: string, payload: Record<string, unknown>) => {
             if (streamWriter) await streamWriter(encodeChunk(eventType, payload));
           },
           promptName,
           audioContentName: { get: () => audioContentName, set: (v) => { audioContentName = v as `${string}-${string}-${string}-${string}-${string}`; } },
+          lastEmittedText: { get: (r) => lastEmittedText[r], set: (r, v) => { lastEmittedText[r] = v; } },
         });
       }
 
@@ -670,10 +698,12 @@ async function handleOutputEvent(
     pendingToolUseId: ToolRef;
     pendingToolName: ToolRef;
     pendingToolInput: ToolInputRef;
-    currentTextBlock: { get: () => { role: "caller" | "agent"; text: string } | null; set: (v: { role: "caller" | "agent"; text: string } | null) => void };
+    activeTextBlocks: Map<string, { role: "caller" | "agent"; text: string; hasAudio: boolean }>;
+    currentBlockName: { get: () => string | null; set: (v: string | null) => void };
     sendChunk: (eventType: string, payload: Record<string, unknown>) => Promise<void>;
     promptName: string;
     audioContentName: { get: () => string; set: (v: string) => void };
+    lastEmittedText: { get: (r: "caller" | "agent") => string; set: (r: "caller" | "agent", v: string) => void };
   }
 ): Promise<void> {
   let ev: Record<string, unknown>;
@@ -703,32 +733,52 @@ async function handleOutputEvent(
       ctx.callbacks.onAudioOutput("__FLUSH__");
       return;
     }
+    // Mark the specific block (by contentName) as audio — its textOutput events are
+    // speech transcription, not a separate text turn. We must NOT emit this block.
+    const audioBlockName = (audio["contentName"] as string | undefined) ?? ctx.currentBlockName.get();
+    if (audioBlockName) {
+      const block = ctx.activeTextBlocks.get(audioBlockName);
+      if (block) block.hasAudio = true;
+    }
     ctx.callbacks.onAudioOutput(audio["content"] as string);
     return;
   }
 
-  // contentStart — start a new text accumulation block.
-  // Skip ASSISTANT AUDIO-type blocks: Nova Sonic sends both a TEXT block (transcript)
-  // and an AUDIO block (speech audio) per response. Both contain textOutput events,
-  // which would cause the agent turn to appear twice in the transcript.
+  // contentStart — register a new block in activeTextBlocks for every USER/ASSISTANT turn.
+  // We no longer try to skip AUDIO blocks here because Nova Sonic does not reliably
+  // include type:"AUDIO" in response contentStart events. Instead, we detect audio blocks
+  // at runtime: when audioOutput events arrive for a contentName we mark hasAudio=true,
+  // and contentEnd skips emitting audio-flagged blocks. Per-contentName tracking avoids
+  // the interleaving problem that a single-slot approach has.
   if (ev["contentStart"]) {
     const cs = ev["contentStart"] as Record<string, unknown>;
     const rawRole = (cs["role"] as string | undefined)?.toUpperCase();
-    const rawType = (cs["type"] as string | undefined)?.toUpperCase();
-    if ((rawRole === "USER" || rawRole === "ASSISTANT") && rawType !== "AUDIO") {
+    const contentName = (cs["contentName"] as string | undefined) ?? `_block_${crypto.randomUUID()}`;
+    if (rawRole === "USER" || rawRole === "ASSISTANT") {
       const role: "caller" | "agent" = rawRole === "USER" ? "caller" : "agent";
-      ctx.currentTextBlock.set({ role, text: "" });
+      ctx.activeTextBlocks.set(contentName, { role, text: "", hasAudio: false });
+      ctx.currentBlockName.set(contentName);
     }
     return;
   }
 
-  // textOutput — accumulate into the active block
+  // textOutput — accumulate into the block identified by contentName
   if (ev["textOutput"]) {
     const text = ev["textOutput"] as Record<string, unknown>;
+    // Nova Sonic sends textOutput with interrupted:true (or content='{"interrupted":true}')
+    // when the agent's speech is cut off. Skip these — they are control signals, not text.
+    if (text["interrupted"] === true) return;
     const content = (text["content"] as string) ?? "";
-    const block = ctx.currentTextBlock.get();
-    if (block && content) {
-      block.text += content;
+    if (content) {
+      try {
+        const parsed = JSON.parse(content) as unknown;
+        if (parsed && typeof parsed === "object" && "interrupted" in (parsed as object)) return;
+      } catch { /* not JSON — treat as real text */ }
+    }
+    const textBlockName = (text["contentName"] as string | undefined) ?? ctx.currentBlockName.get();
+    if (textBlockName && content) {
+      const block = ctx.activeTextBlocks.get(textBlockName);
+      if (block) block.text += content;
     }
     return;
   }
@@ -768,7 +818,9 @@ async function handleOutputEvent(
     if (end["stopReason"] === "TOOL_USE") {
       // Clear pre-tool TEXT block without emitting — Nova Sonic will re-emit
       // a complete response after the tool result, so emitting here causes duplicates.
-      ctx.currentTextBlock.set(null);
+      const toolEndContentName = (end["contentName"] as string | undefined) ?? ctx.currentBlockName.get();
+      if (toolEndContentName) ctx.activeTextBlocks.delete(toolEndContentName);
+      ctx.currentBlockName.set(null);
       const toolUseId = ctx.pendingToolUseId.get();
       const toolName = ctx.pendingToolName.get();
       const toolInputStr = ctx.pendingToolInput.get();
@@ -844,11 +896,21 @@ async function handleOutputEvent(
       ctx.pendingToolName.set(null);
       ctx.pendingToolInput.set("");
     } else {
-      // Normal content end — emit accumulated text block as transcript
-      const block = ctx.currentTextBlock.get();
-      if (block && block.text.trim()) {
-        ctx.currentTextBlock.set(null);
-        ctx.callbacks.onTranscript(block.role, block.text.trim());
+      // Normal content end — look up block by contentName and emit only if it
+      // was NOT an audio block. Audio blocks are detected by audioOutput events
+      // arriving for that contentName (hasAudio=true).
+      const endContentName = (end["contentName"] as string | undefined) ?? ctx.currentBlockName.get();
+      if (endContentName) {
+        const block = ctx.activeTextBlocks.get(endContentName);
+        ctx.activeTextBlocks.delete(endContentName);
+        ctx.currentBlockName.set(null);
+        if (block && block.text.trim() && !block.hasAudio) {
+          const t = block.text.trim();
+          if (ctx.lastEmittedText.get(block.role) !== t) {
+            ctx.lastEmittedText.set(block.role, t);
+            ctx.callbacks.onTranscript(block.role, t);
+          }
+        }
       }
     }
     return;

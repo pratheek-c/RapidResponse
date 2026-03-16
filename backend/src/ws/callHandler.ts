@@ -63,6 +63,10 @@ export type CallState = {
   incidentType: import("../types/index.ts").IncidentType | null;
   incidentPriority: import("../types/index.ts").IncidentPriority | null;
   incidentStatus: import("../types/index.ts").IncidentStatus;
+  // Set to the dispatcher's question text before injecting into Nova Sonic.
+  // Cleared after the next agent turn so that turn is shown as a special
+  // annotation in the dispatcher transcript rather than a plain AI bubble.
+  pendingDispatcherQuestion: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -74,6 +78,18 @@ export type BunServerWebSocket = {
   close: (code?: number, reason?: string) => void;
   data: unknown;
 };
+
+// ---------------------------------------------------------------------------
+// Active call state registry — allows other modules (e.g. dispatch routes)
+// to set flags on a live call by incident_id.
+// ---------------------------------------------------------------------------
+
+const activeCallStates = new Map<string, CallState>();
+
+export function markDispatcherQuestionPending(incident_id: string, question: string): void {
+  const cs = activeCallStates.get(incident_id);
+  if (cs) cs.pendingDispatcherQuestion = question;
+}
 
 /**
  * Called when a new WebSocket connection is opened.
@@ -238,16 +254,34 @@ async function handleCallStart(
           }
           sendMsg(ws, { type: "transcript_update", role, text });
 
-          // Push transcript SSE to dispatcher dashboard
-          pushSSE({
-            type: "transcript_update",
-            data: {
-              incident_id,
-              role: role === "agent" ? "ai" : "caller",
-              text,
-              timestamp: new Date().toISOString(),
-            },
-          });
+          // If this agent turn is the response to a dispatcher-injected question,
+          // show it as a special annotation in the dispatcher transcript instead
+          // of a plain AI bubble. The caller still hears/sees it normally via WS.
+          const pendingQ = state.current?.pendingDispatcherQuestion ?? null;
+          if (role === "agent" && pendingQ) {
+            if (state.current) state.current.pendingDispatcherQuestion = null;
+            pushSSE({
+              type: "transcript_annotation",
+              data: {
+                incident_id,
+                icon: "💬",
+                label: `Agent asked caller: ${text}`,
+                color: "cyan",
+              },
+            });
+            // Still accumulate into transcript/report state below — no regular SSE push
+          } else {
+            // Push transcript SSE to dispatcher dashboard
+            pushSSE({
+              type: "transcript_update",
+              data: {
+                incident_id,
+                role: role === "agent" ? "ai" : "caller",
+                text,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
 
           // Accumulate transcript in call state for report agent
           if (state.current) {
@@ -390,7 +424,9 @@ async function handleCallStart(
     incidentType: null,
     incidentPriority: null,
     incidentStatus: "active",
+    pendingDispatcherQuestion: null,
   };
+  activeCallStates.set(incident_id, state.current);
 
   // Start 30-second report interval
   state.current.reportIntervalId = setInterval(() => {
@@ -413,6 +449,7 @@ async function handleCallEnd(
   if (!state.current) return;
   const { incident_id, session } = state.current;
   clearReportInterval(state.current);
+  activeCallStates.delete(incident_id);
   state.current = null;
 
   try {

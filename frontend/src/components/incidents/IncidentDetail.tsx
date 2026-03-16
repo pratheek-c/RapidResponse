@@ -89,10 +89,18 @@ function HazardPill({ active, label, icon }: { active: boolean; label: string; i
 }
 
 function AIReportCard({ incident }: { incident: DashboardIncident }) {
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
   const cfg = PRIORITY_CONFIG[incident.priority ?? "P4"];
   const ageMs = Date.now() - Date.parse(incident.created_at);
   const ageMin = Math.floor(ageMs / 60000);
 
+  // ... (rest of the component remains the same)
   const activeHazards = [
     { active: incident.hazards.fire, label: "Fire", icon: <Flame className="h-2.5 w-2.5" /> },
     { active: incident.hazards.smoke, label: "Smoke", icon: <ActivitySquare className="h-2.5 w-2.5" /> },
@@ -120,6 +128,7 @@ function AIReportCard({ incident }: { incident: DashboardIncident }) {
           {ageMin > 0 ? `${ageMin}m ago` : "Just now"}
         </span>
       </div>
+
 
       {/* Summary */}
       <p className="mb-2 text-sm font-semibold leading-snug text-slate-100">
@@ -264,12 +273,16 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
 
   // Load transcript + questions automatically when incident is opened
   useEffect(() => {
+    // Clear old data immediately to prevent stale UI
+    setTranscript([]);
+    setQaEntries([]);
+    setActionError(null);
+    setSelectedUnitIds([]);
+
     void loadTranscript();
     void loadQuestions();
-    // Reset unit selection when switching incidents
-    setSelectedUnitIds([]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [incident.id]);
+  }, [incident.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   const assignedDepartments = useMemo<Department[]>(() => {
     return units
@@ -547,6 +560,7 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
                 onToggle={toggleUnit}
                 incidentLat={incident.location.lat}
                 incidentLng={incident.location.lng}
+                incidentId={incident.id}
               />
 
               {actionError && (

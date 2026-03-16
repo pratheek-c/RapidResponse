@@ -9,6 +9,7 @@ type UnitSelectorProps = {
   /** If provided, units are sorted by proximity to this lat/lng */
   incidentLat?: number;
   incidentLng?: number;
+  incidentId: string;
 };
 
 const UNIT_TYPE_LABELS: Record<string, string> = {
@@ -64,6 +65,7 @@ export function UnitSelector({
   onToggle,
   incidentLat,
   incidentLng,
+  incidentId,
 }: UnitSelectorProps) {
   const ranked = useMemo(() => {
     const hasCoords = incidentLat !== undefined && incidentLng !== undefined;
@@ -88,7 +90,10 @@ export function UnitSelector({
   }, [units, incidentLat, incidentLng]);
 
   const available = ranked.filter((r) => r.unit.status === "available");
-  const unavailable = ranked.filter((r) => r.unit.status !== "available");
+  const assignedHere = ranked.filter((r) => r.unit.current_incident_id === incidentId);
+  const busyElsewhere = ranked.filter(
+    (r) => r.unit.status !== "available" && r.unit.current_incident_id !== incidentId
+  );
 
   // Auto-assign: pick the first available (closest) unit
   function handleAutoAssign() {
@@ -125,6 +130,34 @@ export function UnitSelector({
             </span>
           )}
         </button>
+      )}
+
+      {/* Assigned Here */}
+      {assignedHere.length > 0 && (
+        <div className="mb-3 space-y-1.5">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">
+            Assigned to this incident
+          </p>
+          {assignedHere.map(({ unit }) => (
+            <div
+              key={unit.id}
+              className="flex items-center justify-between rounded-md border border-emerald-900 bg-emerald-950/20 px-2.5 py-2 text-xs opacity-90"
+            >
+              <div className="flex items-center gap-2">
+                <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[unit.status] ?? "bg-slate-500"}`} />
+                <span className="font-mono font-bold text-slate-100">{unit.unit_code}</span>
+                <span className={`text-[9px] font-bold uppercase tracking-wider ${UNIT_TYPE_COLORS[unit.type] ?? "text-slate-400"}`}>
+                  {UNIT_TYPE_LABELS[unit.type] ?? unit.type.toUpperCase()}
+                </span>
+              </div>
+              <div className="flex bg-slate-800 px-1 rounded border border-slate-700 items-center justify-center gap-2 text-right">
+                <span className="text-[10px] text-slate-300">
+                  {STATUS_LABELS[unit.status] ?? unit.status}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       {/* Available units */}
@@ -181,14 +214,14 @@ export function UnitSelector({
         })}
       </div>
 
-      {/* Unavailable units — collapsed hint */}
-      {unavailable.length > 0 && (
-        <details className="mt-2">
+      {/* Busy Elsewhere (Unavailable units) — collapsed hint */}
+      {busyElsewhere.length > 0 && (
+        <details className="mt-4">
           <summary className="cursor-pointer text-[10px] text-slate-500 hover:text-slate-400">
-            {unavailable.length} unit{unavailable.length !== 1 ? "s" : ""} unavailable (dispatched / on scene)
+            {busyElsewhere.length} unit{busyElsewhere.length !== 1 ? "s" : ""} busy on other incidents
           </summary>
           <div className="mt-1.5 space-y-1">
-            {unavailable.map(({ unit, distKm }) => (
+            {busyElsewhere.map(({ unit, distKm }) => (
               <div
                 key={unit.id}
                 className="flex items-center justify-between rounded-md border border-slate-800 bg-slate-950/40 px-2.5 py-1.5 text-xs opacity-50"
@@ -212,7 +245,7 @@ export function UnitSelector({
         </details>
       )}
 
-      {available.length === 0 && unavailable.length === 0 && (
+      {available.length === 0 && assignedHere.length === 0 && busyElsewhere.length === 0 && (
         <p className="text-xs text-slate-500">No units available.</p>
       )}
     </div>

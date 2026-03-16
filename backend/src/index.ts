@@ -41,6 +41,9 @@ async function runMigrations(): Promise<void> {
       "004_dispatch_tables.sql",
       "005_fix_units_fk.sql",
       "006_fix_transcription_dispatches_fk.sql",
+      "007_add_cad_number.sql",
+      "008_add_covert_distress.sql",
+      "009_roles.sql",
     ];
 
     for (const file of files) {

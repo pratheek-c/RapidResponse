@@ -458,22 +458,22 @@ export type CreateDispatchQuestionInput = {
 // --- SSE event union for the dispatcher dashboard ---
 
 export type DashboardSSEEvent =
-  | { type: "incident_created";      data: { incident_id: string; created_at: string } }
-  | { type: "incident_classified";   data: { incident_id: string; incident_type: string; priority: IncidentPriority } }
-  | { type: "transcript_update";     data: { incident_id: string; role: "caller" | "ai"; text: string; timestamp: string } }
-  | { type: "extraction_update";     data: { incident_id: string; extraction: Record<string, unknown> } }
-  | { type: "answer_update";         data: { incident_id: string; question: string; answer: string } }
-  | { type: "unit_dispatched";       data: { incident_id: string; unit_id: string; unit_type: Department } }
-  | { type: "status_change";         data: { incident_id: string; status: IncidentStatus; unit_id?: string } }
+  | { type: "incident_created"; data: { incident_id: string; created_at: string } }
+  | { type: "incident_classified"; data: { incident_id: string; incident_type: string; priority: IncidentPriority } }
+  | { type: "transcript_update"; data: { incident_id: string; role: "caller" | "ai"; text: string; timestamp: string } }
+  | { type: "extraction_update"; data: { incident_id: string; extraction: Record<string, unknown> } }
+  | { type: "answer_update"; data: { incident_id: string; question: string; answer: string } }
+  | { type: "unit_dispatched"; data: { incident_id: string; unit_id: string; unit_type: Department } }
+  | { type: "status_change"; data: { incident_id: string; status: IncidentStatus; unit_id?: string } }
   | { type: "escalation_suggestion"; data: { incident_id: string; reason: string; suggested_units: Department[] } }
-  | { type: "incident_completed";    data: { incident_id: string; summary: string } }
-  | { type: "covert_distress";       data: { incident_id: string; trigger: string; confidence: "high" | "medium"; silent_approach: boolean } }
-  | { type: "backup_requested";      data: { incident_id: string; requesting_unit: string; requested_types: Department[]; urgency: "routine" | "urgent" | "emergency"; message: string; target_units: string[] } }
-  | { type: "backup_accepted";       data: { incident_id: string; responding_unit: string; responding_unit_type: Department } }
-  | { type: "unit_status_change";    data: { unit_id: string; status: UnitStatus; assigned_incident: string | null } }
+  | { type: "incident_completed"; data: { incident_id: string; summary: string } }
+  | { type: "covert_distress"; data: { incident_id: string; trigger: string; confidence: "high" | "medium"; silent_approach: boolean } }
+  | { type: "backup_requested"; data: { incident_id: string; requesting_unit: string; requested_types: Department[]; urgency: "routine" | "urgent" | "emergency"; message: string; target_units: string[] } }
+  | { type: "backup_accepted"; data: { incident_id: string; responding_unit: string; responding_unit_type: Department } }
+  | { type: "unit_status_change"; data: { unit_id: string; status: UnitStatus; assigned_incident: string | null } }
   | { type: "transcript_annotation"; data: { incident_id: string; icon: string; label: string; color: string } }
-  | { type: "assignment_suggested";  data: { incident_id: string; suggested_unit: string; unit_type: string; distance_km: number; priority: string } }
-  | { type: "unit_auto_dispatched";  data: { incident_id: string; unit_id: string; unit_type: string; auto: true } };
+  | { type: "assignment_suggested"; data: { incident_id: string; suggested_unit: string; unit_type: string; distance_km: number; priority: string } }
+  | { type: "unit_auto_dispatched"; data: { incident_id: string; unit_id: string; unit_type: string; auto: true } };
 
 // ---------------------------------------------------------------------------
 // Role-based dispatch — new types (009)
