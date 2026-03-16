@@ -1,0 +1,79 @@
+# =============================================================================
+# RapidResponse.ai — docker-compose.yml
+#
+# Two services:
+#   backend  — Bun server (port 3000), mounts named volume for DB + LanceDB
+#   frontend — Caddy static server + reverse proxy (port 80)
+#
+# Usage (local dev with .env at repo root):
+#   docker compose up --build
+#
+# AWS (ECS) usage:
+#   - Remove or ignore the `env_file` line; inject secrets via ECS Task IAM
+#     Role and ECS task definition environment / secrets fields instead.
+#   - The `backend_data` volume should be replaced with an EFS mount in ECS.
+# =============================================================================
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    ports:
+      # Expose backend port to the host for debugging. In production behind a
+      # load balancer you can remove this and rely on frontend→backend networking.
+      - "3000:3000"
+    volumes:
+      # Named volume for libSQL DB and LanceDB vector store.
+      # Use an EFS volume in ECS for persistence across task replacements.
+      - backend_data:/data
+    env_file:
+      # .env at repo root is used for local development only.
+      # Never commit .env — it is listed in .gitignore.
+      - .env
+    environment:
+      # Override paths to point at the named volume mount.
+      # These take precedence over any values in .env.
+      LIBSQL_URL: "file:///data/rapidresponse.db"
+      LANCEDB_PATH: "/data/lancedb"
+      # Default values for optional vars — override in .env as needed.
+      PORT: "3000"
+      S3_RECORDINGS_PREFIX: "${S3_RECORDINGS_PREFIX:-recordings/}"
+      DISPATCH_CITY: "${DISPATCH_CITY:-Springfield}"
+      DISPATCH_DEPT: "${DISPATCH_DEPT:-Springfield Emergency Services}"
+      FRONTEND_URL: "${FRONTEND_URL:-http://localhost}"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # Firebase public client keys — baked into the Vite bundle at build time.
+        # These are intentionally public (client-side Firebase config).
+        VITE_FIREBASE_API_KEY: "${VITE_FIREBASE_API_KEY:-}"
+        VITE_FIREBASE_AUTH_DOMAIN: "${VITE_FIREBASE_AUTH_DOMAIN:-}"
+        VITE_FIREBASE_PROJECT_ID: "${VITE_FIREBASE_PROJECT_ID:-}"
+        VITE_FIREBASE_STORAGE_BUCKET: "${VITE_FIREBASE_STORAGE_BUCKET:-}"
+        VITE_FIREBASE_MESSAGING_SENDER_ID: "${VITE_FIREBASE_MESSAGING_SENDER_ID:-}"
+        VITE_FIREBASE_APP_ID: "${VITE_FIREBASE_APP_ID:-}"
+        # Leave empty to use relative URLs — Caddy proxies to backend service.
+        VITE_API_BASE: ""
+        VITE_WS_BASE: ""
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+# Named volume — persists libSQL DB + LanceDB data across container restarts.
+# In AWS ECS, replace this with an EFS volume mount in the task definition.
+volumes:
+  backend_data:

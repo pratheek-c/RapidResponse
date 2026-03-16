@@ -40,17 +40,24 @@ export type { SocketData };
 // CORS helper
 // ---------------------------------------------------------------------------
 
-function corsHeaders(): Record<string, string> {
+function getAllowedOrigin(req: Request): string {
+  const origin = req.headers.get("origin") ?? "";
+  // Allow any localhost port in dev; fall back to configured FRONTEND_URL in prod
+  if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) return origin;
+  return env.FRONTEND_URL;
+}
+
+function corsHeaders(req: Request): Record<string, string> {
   return {
-    "Access-Control-Allow-Origin": env.FRONTEND_URL,
+    "Access-Control-Allow-Origin": getAllowedOrigin(req),
     "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Role, X-Unit-Id",
   };
 }
 
-function withCors(response: Response): Response {
+function withCors(response: Response, req: Request): Response {
   const headers = new Headers(response.headers);
-  for (const [k, v] of Object.entries(corsHeaders())) {
+  for (const [k, v] of Object.entries(corsHeaders(req))) {
     headers.set(k, v);
   }
   return new Response(response.body, {
@@ -69,7 +76,7 @@ async function router(req: Request): Promise<Response> {
 
   // Preflight
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders() });
+    return new Response(null, { status: 204, headers: corsHeaders(req) });
   }
 
   // Health check
@@ -82,42 +89,42 @@ async function router(req: Request): Promise<Response> {
   // SSE
   if (path === "/events" && req.method === "GET") {
     const { response } = sseRegister();
-    return response;
+    return withCors(response, req);
   }
 
   // Incidents
   if (path.startsWith("/incidents")) {
-    return withCors(await handleIncidents(req));
+    return withCors(await handleIncidents(req), req);
   }
 
   // Units
   if (path.startsWith("/units")) {
-    return withCors(await handleUnits(req));
+    return withCors(await handleUnits(req), req);
   }
 
   // Dispatch
   if (path.startsWith("/dispatch")) {
-    return withCors(await handleDispatch(req));
+    return withCors(await handleDispatch(req), req);
   }
 
   // Protocols
   if (path.startsWith("/protocols")) {
-    return withCors(await handleProtocols(req));
+    return withCors(await handleProtocols(req), req);
   }
 
   // Recordings
   if (path.startsWith("/recordings")) {
-    return withCors(await handleRecordings(req));
+    return withCors(await handleRecordings(req), req);
   }
 
   // Report
   if (path.startsWith("/report")) {
-    return withCors(await handleReport(req));
+    return withCors(await handleReport(req), req);
   }
 
   // Mock data
   if (path.startsWith("/mock")) {
-    return withCors(await handleMock(req));
+    return withCors(await handleMock(req), req);
   }
 
   return new Response(JSON.stringify({ ok: false, error: "Not found" }), {
@@ -159,7 +166,7 @@ export function createServer() {
     },
 
     websocket: {
-      open(ws) {
+      open(_ws) {
         // Socket opened — state is already initialised in data
       },
 

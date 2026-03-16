@@ -1,5 +1,5 @@
 /**
- * CallerView — Emergency 911 caller page.
+ * CallerView — Emergency 112 caller page.
  *
  * Auto-arms on mount: as soon as geolocation resolves the voice agent
  * connects automatically (mic permission → WebSocket open → agent greeting).
@@ -532,7 +532,7 @@ export function CallerView() {
               }}
               style={{ background: "#000", color: "#fff", border: "1px solid #444", borderRadius: 10, padding: "14px 40px", fontSize: 16, fontWeight: 800, cursor: "pointer", letterSpacing: 0.5 }}
             >
-              {isEnded || isError ? "Call 911 Again" : "Call 911"}
+              {isEnded || isError ? "Call 112 Again" : "Call 112"}
             </button>
           )}
           {isArmed && (
@@ -575,7 +575,7 @@ export function CallerView() {
       {/* Disclaimer */}
       <p style={{ marginTop: 20, fontSize: 11, color: "#333", textAlign: "center", maxWidth: 480 }}>
         Your location is used solely for emergency dispatch. GPS coordinates and address are
-        transmitted to the 911 dispatch system and are not stored beyond the incident record.
+        transmitted to the 112 dispatch system and are not stored beyond the incident record.
       </p>
 
       <style>{`

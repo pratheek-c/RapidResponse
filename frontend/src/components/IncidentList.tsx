@@ -12,7 +12,7 @@ type Props = {
 
 export function IncidentList({ incidents, onSelect, selectedId }: Props) {
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<FilterTab>("all");
+  const [filter, setFilter] = useState<FilterTab>("active");
 
   const filtered = useMemo(() => {
     let list = incidents;
@@ -36,6 +36,7 @@ export function IncidentList({ incidents, onSelect, selectedId }: Props) {
     { label: "All", value: "all" },
     { label: "Active", value: "active" },
     { label: "Dispatched", value: "dispatched" },
+    { label: "On Scene", value: "on_scene" },
     { label: "Resolved", value: "resolved" },
   ];
 

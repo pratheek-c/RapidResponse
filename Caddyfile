@@ -1,0 +1,50 @@
+# =============================================================================
+# RapidResponse.ai — Caddyfile
+#
+# Serves the React SPA from /srv and reverse-proxies API traffic to the
+# backend container (service name "backend", port 3000).
+#
+# Key requirements:
+#   - SSE (/events): must flush immediately — flush_interval -1
+#   - WebSocket (/call): Caddy handles upgrade automatically when
+#     reverse_proxy sees Upgrade: websocket header
+#   - SPA fallback: all non-file paths → index.html
+# =============================================================================
+
+:80 {
+    # Compress responses (skip already-compressed media types by default)
+    encode gzip
+
+    # ── SSE stream (/events) ──────────────────────────────────────────────────
+    # flush_interval -1 disables buffering so each event is sent to the client
+    # immediately. Without this, Caddy would buffer until the connection ends.
+    @sse path /events
+    reverse_proxy @sse backend:3000 {
+        flush_interval -1
+    }
+
+    # ── WebSocket — live call audio (/call) ───────────────────────────────────
+    # Caddy auto-detects WebSocket upgrades when the Upgrade header is present.
+    # Matching on path alone is sufficient; Caddy will pass the upgrade through.
+    @ws path /call /call/*
+    reverse_proxy @ws backend:3000
+
+    # ── REST API routes ───────────────────────────────────────────────────────
+    # Proxy all backend API paths. Ordering matters: more specific matchers
+    # (SSE, WS) must appear above these catch-all path matchers.
+    reverse_proxy /incidents*  backend:3000
+    reverse_proxy /units*      backend:3000
+    reverse_proxy /dispatch*   backend:3000
+    reverse_proxy /protocols*  backend:3000
+    reverse_proxy /recordings* backend:3000
+    reverse_proxy /report*     backend:3000
+    reverse_proxy /mock*       backend:3000
+    reverse_proxy /health*     backend:3000
+
+    # ── SPA fallback ─────────────────────────────────────────────────────────
+    # Serve static files from /srv. For any path that doesn't match a real
+    # file, fall back to index.html so React Router handles client-side routing.
+    root * /srv
+    try_files {path} /index.html
+    file_server
+}

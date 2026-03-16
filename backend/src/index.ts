@@ -16,7 +16,7 @@ const MIGRATIONS_DIR = resolve(import.meta.dir, "./db/migrations");
 async function runMigrations(): Promise<void> {
   const db = createClient({
     url: env.LIBSQL_URL,
-    authToken: env.LIBSQL_AUTH_TOKEN,
+    ...(env.LIBSQL_AUTH_TOKEN ? { authToken: env.LIBSQL_AUTH_TOKEN } : {}),
   });
 
   try {
@@ -34,7 +34,17 @@ async function runMigrations(): Promise<void> {
       )
     );
 
-    const files = ["001_initial.sql", "002_add_indexes.sql", "003_add_caller_address.sql"];
+    const files = [
+      "001_initial.sql",
+      "002_add_indexes.sql",
+      "003_add_caller_address.sql",
+      "004_dispatch_tables.sql",
+      "005_fix_units_fk.sql",
+      "006_fix_transcription_dispatches_fk.sql",
+      "007_add_cad_number.sql",
+      "008_add_covert_distress.sql",
+      "009_roles.sql",
+    ];
 
     for (const file of files) {
       const version = file.replace(".sql", "");
@@ -61,7 +71,7 @@ async function main(): Promise<void> {
   const lanceDb = await getLanceDb();
   await initCollections(lanceDb);
 
-  const server = createServer();
+  createServer();
   console.log(`[startup] RapidResponse.ai backend listening on port ${env.PORT}`);
 }
 

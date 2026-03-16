@@ -21,7 +21,7 @@ const MIGRATIONS_DIR = resolve(
 async function getClient() {
   const url = process.env["LIBSQL_URL"] ?? "file:./data/rapidresponse.db";
   const authToken = process.env["LIBSQL_AUTH_TOKEN"];
-  return createClient({ url, authToken });
+  return createClient({ url, ...(authToken ? { authToken } : {}) });
 }
 
 async function ensureMigrationsTable(db: Awaited<ReturnType<typeof getClient>>) {

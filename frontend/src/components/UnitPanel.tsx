@@ -60,10 +60,10 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const TYPE_ICONS: Record<string, string> = {
-  ems:     "EMS",
-  fire:    "FIRE",
-  police:  "PD",
-  hazmat:  "HZM",
+  ems:     "NAS",
+  fire:    "DFB",
+  police:  "GARDA",
+  hazmat:  "HAZMAT",
   rescue:  "SAR",
 };
 

@@ -15,7 +15,7 @@ import {
   dbListIncidents,
   dbUpdateIncident,
 } from "../db/libsql.ts";
-import { sseSend } from "./sseService.ts";
+import { pushSSE } from "./sseService.ts";
 import type {
   Incident,
   CreateIncidentInput,
@@ -34,7 +34,7 @@ export async function createIncident(
   const db = getDb();
   try {
     const incident = await dbCreateIncident(db, input);
-    sseSend("incident_created", incident.id, incident);
+    pushSSE({ type: "incident_created", data: { incident_id: incident.id, created_at: incident.created_at } });
     return incident;
   } catch (err) {
     throw new Error(
@@ -85,7 +85,7 @@ export async function updateIncident(
   try {
     const updated = await dbUpdateIncident(db, id, input);
     if (updated) {
-      sseSend("incident_updated", id, updated);
+      pushSSE({ type: "status_change", data: { incident_id: id, status: updated.status } });
     }
     return updated;
   } catch (err) {
@@ -113,7 +113,7 @@ export async function classifyIncident(
     });
 
     if (updated) {
-      sseSend("incident_classified", incident_id, { type, priority, incident: updated });
+      pushSSE({ type: "incident_classified", data: { incident_id, incident_type: type, priority } });
     }
 
     return updated;
@@ -121,6 +121,28 @@ export async function classifyIncident(
     throw new Error(
       `Failed to classify incident ${incident_id}: ${err instanceof Error ? err.message : String(err)}`
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Covert Distress Flag (triggered by Nova Sonic tool call)
+// ---------------------------------------------------------------------------
+
+export async function flagCovertDistress(
+  incident_id: string,
+  trigger: string,
+  confidence: "high" | "medium"
+): Promise<void> {
+  const db = getDb();
+  try {
+    await dbUpdateIncident(db, incident_id, { covert_distress: 1 });
+    pushSSE({
+      type: "covert_distress",
+      data: { incident_id, trigger, confidence, silent_approach: true },
+    });
+  } catch (err) {
+    console.error("[covert_distress] flag failed:", err);
+    throw err;
   }
 }
 
@@ -141,7 +163,7 @@ export async function resolveIncident(
     });
 
     if (updated) {
-      sseSend("call_ended", incident_id, updated);
+      pushSSE({ type: "incident_completed", data: { incident_id, summary: updated.summary ?? "" } });
     }
 
     return updated;

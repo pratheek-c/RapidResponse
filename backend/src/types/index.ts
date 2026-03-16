@@ -7,7 +7,15 @@
 // Incident
 // ---------------------------------------------------------------------------
 
-export type IncidentStatus = "active" | "dispatched" | "resolved" | "cancelled";
+export type IncidentStatus =
+  | "active"       // Call in progress, Sonic talking to caller
+  | "classified"   // Sonic fired classify_incident tool
+  | "dispatched"   // Officer accepted, units assigned
+  | "en_route"     // Units traveling
+  | "on_scene"     // Units arrived
+  | "completed"    // Case closed, report saved
+  | "resolved"     // Legacy alias for completed
+  | "cancelled";
 
 export type IncidentPriority = "P1" | "P2" | "P3" | "P4";
 
@@ -22,6 +30,7 @@ export type IncidentType =
 
 export type Incident = {
   id: string; // UUID
+  cad_number: string | null; // e.g. INC-20260316-0001
   caller_id: string;
   caller_location: string; // "lat, lng" GPS string
   caller_address: string;  // reverse-geocoded human address
@@ -34,12 +43,19 @@ export type Incident = {
   resolved_at: string | null; // ISO 8601
   s3_audio_prefix: string | null;
   s3_transcript_key: string | null;
+  // Dispatch extension columns
+  accepted_at: string | null;
+  completed_at: string | null;
+  escalated: number; // 0 or 1
+  covert_distress: number; // 0 or 1
+  officer_id: string | null;
+  assigned_units: string | null; // JSON array of unit_ids
 };
 
 export type CreateIncidentInput = {
   caller_id: string;
   caller_location: string; // "lat, lng" GPS string
-  caller_address: string;  // reverse-geocoded human address
+  caller_address?: string;  // reverse-geocoded human address (optional, defaults to "")
 };
 
 export type UpdateIncidentInput = {
@@ -50,6 +66,13 @@ export type UpdateIncidentInput = {
   resolved_at?: string;
   s3_audio_prefix?: string;
   s3_transcript_key?: string;
+  // Dispatch extension
+  accepted_at?: string;
+  completed_at?: string;
+  escalated?: number;
+  covert_distress?: number;
+  officer_id?: string;
+  assigned_units?: string; // JSON array string
 };
 
 // ---------------------------------------------------------------------------
@@ -130,7 +153,8 @@ export type ProtocolSearchResult = ProtocolChunk & {
 export type NovaToolName =
   | "classify_incident"
   | "get_protocol"
-  | "dispatch_unit";
+  | "dispatch_unit"
+  | "flag_covert_distress";
 
 export type ClassifyIncidentInput = {
   type: IncidentType;
@@ -330,3 +354,162 @@ export type ApiError = {
 };
 
 export type ApiResponse<T> = ApiSuccess<T> | ApiError;
+
+// ---------------------------------------------------------------------------
+// Dashboard Dispatch — new types
+// ---------------------------------------------------------------------------
+
+/**
+ * Department label used by the dashboard API.
+ * Maps to UnitType at the DB boundary:
+ *   patrol ↔ police
+ *   medical ↔ ems
+ *   fire ↔ fire
+ *   hazmat ↔ hazmat
+ */
+export type Department = "patrol" | "fire" | "medical" | "hazmat";
+
+/** Numeric severity 1 (routine) – 5 (critical) */
+export type Priority = 1 | 2 | 3 | 4 | 5;
+
+// --- Request body shapes for dispatch routes ---
+
+export type AcceptRequest = {
+  incident_id: string;
+  unit_ids: string[];
+  officer_id: string;
+};
+
+export type QuestionRequest = {
+  incident_id: string;
+  question: string;
+  officer_id: string;
+  role?: string;
+};
+
+export type EscalateRequest = {
+  incident_id: string;
+  reason: string;
+  requested_unit_types: Department[];
+};
+
+export type CompleteRequest = {
+  incident_id: string;
+  officer_notes?: string;
+};
+
+export type SaveReportRequest = {
+  incident_id: string;
+  summary: string;
+};
+
+// --- New DB row types ---
+
+export type DispatchAction = {
+  id: string;
+  incident_id: string;
+  action_type: "accept" | "escalate" | "question" | "complete" | "save_report";
+  officer_id: string | null;
+  payload: string | null; // JSON string
+  created_at: string;
+};
+
+export type CreateDispatchActionInput = {
+  incident_id: string;
+  action_type: DispatchAction["action_type"];
+  officer_id?: string;
+  payload?: Record<string, unknown>;
+};
+
+export type IncidentUnit = {
+  id: string;
+  incident_id: string;
+  unit_id: string;
+  unit_type: UnitType;
+  status: "dispatched" | "en_route" | "on_scene";
+  dispatched_at: string;
+  arrived_at: string | null;
+};
+
+export type CreateIncidentUnitInput = {
+  incident_id: string;
+  unit_id: string;
+  unit_type: UnitType;
+};
+
+export type DispatchQuestion = {
+  id: string;
+  incident_id: string;
+  officer_id: string | null;
+  question: string;
+  refined_question: string | null;
+  answer: string | null;
+  asked_at: string;
+  answered_at: string | null;
+};
+
+export type CreateDispatchQuestionInput = {
+  incident_id: string;
+  officer_id?: string;
+  question: string;
+  refined_question?: string;
+};
+
+// --- SSE event union for the dispatcher dashboard ---
+
+export type DashboardSSEEvent =
+  | { type: "incident_created"; data: { incident_id: string; created_at: string } }
+  | { type: "incident_classified"; data: { incident_id: string; incident_type: string; priority: IncidentPriority } }
+  | { type: "transcript_update"; data: { incident_id: string; role: "caller" | "ai"; text: string; timestamp: string } }
+  | { type: "extraction_update"; data: { incident_id: string; extraction: Record<string, unknown> } }
+  | { type: "answer_update"; data: { incident_id: string; question: string; answer: string } }
+  | { type: "unit_dispatched"; data: { incident_id: string; unit_id: string; unit_type: Department } }
+  | { type: "status_change"; data: { incident_id: string; status: IncidentStatus; unit_id?: string } }
+  | { type: "escalation_suggestion"; data: { incident_id: string; reason: string; suggested_units: Department[] } }
+  | { type: "incident_completed"; data: { incident_id: string; summary: string } }
+  | { type: "covert_distress"; data: { incident_id: string; trigger: string; confidence: "high" | "medium"; silent_approach: boolean } }
+  | { type: "backup_requested"; data: { incident_id: string; requesting_unit: string; requested_types: Department[]; urgency: "routine" | "urgent" | "emergency"; message: string; target_units: string[] } }
+  | { type: "backup_accepted"; data: { incident_id: string; responding_unit: string; responding_unit_type: Department } }
+  | { type: "unit_status_change"; data: { unit_id: string; status: UnitStatus; assigned_incident: string | null } }
+  | { type: "transcript_annotation"; data: { incident_id: string; icon: string; label: string; color: string } }
+  | { type: "assignment_suggested"; data: { incident_id: string; suggested_unit: string; unit_type: string; distance_km: number; priority: string } }
+  | { type: "unit_auto_dispatched"; data: { incident_id: string; unit_id: string; unit_type: string; auto: true } };
+
+// ---------------------------------------------------------------------------
+// Role-based dispatch — new types (009)
+// ---------------------------------------------------------------------------
+
+export type UserRole = "dispatcher" | "unit_officer";
+
+export type TakeRequest = {
+  incident_id: string;
+  unit_id: string;
+  role: UserRole;           // Must be 'unit_officer'
+};
+
+export type BackupRequestBody = {
+  incident_id: string;
+  requesting_unit: string;
+  requested_types: Department[];
+  urgency: "routine" | "urgent" | "emergency";
+  message?: string;
+  role: UserRole;           // Must be 'unit_officer'
+};
+
+export type BackupRespondBody = {
+  incident_id: string;
+  responding_unit: string;
+  role: UserRole;           // Must be 'unit_officer'
+};
+
+export type BackupRequest = {
+  id: string;
+  incident_id: string;
+  requesting_unit: string;
+  requested_types: string;  // JSON array
+  urgency: "routine" | "urgent" | "emergency";
+  message: string | null;
+  alerted_units: string | null;  // JSON array
+  responded_units: string | null; // JSON array
+  created_at: string;
+};

@@ -25,11 +25,22 @@ import type {
 } from "../types/index.ts";
 import { createIncident, updateIncident } from "../services/incidentService.ts";
 import { saveAgentTurn, saveCallerTurn, exportTranscript } from "../services/transcriptionService.ts";
-import { uploadTranscript, uploadAudioChunk } from "../services/storageService.ts";
-import { startNovaSession, type NovaSession, type AvailableUnitSummary } from "../agents/novaAgent.ts";
+import { uploadTranscript } from "../services/storageService.ts";
+import {
+  startNovaSession,
+  registerSession,
+  deregisterSession,
+  type NovaSession,
+  type AvailableUnitSummary,
+} from "../agents/novaAgent.ts";
 import { generateReport, assignDispatcher, type MockData } from "../agents/reportAgent.ts";
 import { cacheReport, evictReport } from "../routes/reportRoute.ts";
 import type { MockUnitWithDistance } from "../routes/units.ts";
+import { maybeExtract, cancelExtraction, getExtraction } from "../services/extractionService.ts";
+import { evaluateEscalation } from "../agents/triageAgent.ts";
+import { pushSSE } from "../services/sseService.ts";
+import { extractAnswer } from "../agents/dispatchBridgeAgent.ts";
+import { dbGetDispatchQuestions, dbUpdateDispatchQuestion, getDb } from "../db/libsql.ts";
 
 // ---------------------------------------------------------------------------
 // Per-connection state
@@ -52,6 +63,10 @@ export type CallState = {
   incidentType: import("../types/index.ts").IncidentType | null;
   incidentPriority: import("../types/index.ts").IncidentPriority | null;
   incidentStatus: import("../types/index.ts").IncidentStatus;
+  // Set to the dispatcher's question text before injecting into Nova Sonic.
+  // Cleared after the next agent turn so that turn is shown as a special
+  // annotation in the dispatcher transcript rather than a plain AI bubble.
+  pendingDispatcherQuestion: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -63,6 +78,18 @@ export type BunServerWebSocket = {
   close: (code?: number, reason?: string) => void;
   data: unknown;
 };
+
+// ---------------------------------------------------------------------------
+// Active call state registry — allows other modules (e.g. dispatch routes)
+// to set flags on a live call by incident_id.
+// ---------------------------------------------------------------------------
+
+const activeCallStates = new Map<string, CallState>();
+
+export function markDispatcherQuestionPending(incident_id: string, question: string): void {
+  const cs = activeCallStates.get(incident_id);
+  if (cs) cs.pendingDispatcherQuestion = question;
+}
 
 /**
  * Called when a new WebSocket connection is opened.
@@ -164,8 +191,9 @@ async function handleCallStart(
 
   try {
     const coordParts = msg.location.split(",").map((s) => parseFloat(s.trim()));
-    if (coordParts.length === 2 && !isNaN(coordParts[0]) && !isNaN(coordParts[1])) {
-      const [lat, lng] = coordParts;
+    if (coordParts.length === 2 && !isNaN(coordParts[0]!) && !isNaN(coordParts[1]!)) {
+      const lat = coordParts[0]!;
+      const lng = coordParts[1]!;
       const { getMockUnitsWithDistance } = await import("../routes/units.ts");
       mockUnitsWithDistance = await getMockUnitsWithDistance(lat, lng);
       available_units = mockUnitsWithDistance.map((u) => ({
@@ -226,6 +254,35 @@ async function handleCallStart(
           }
           sendMsg(ws, { type: "transcript_update", role, text });
 
+          // If this agent turn is the response to a dispatcher-injected question,
+          // show it as a special annotation in the dispatcher transcript instead
+          // of a plain AI bubble. The caller still hears/sees it normally via WS.
+          const pendingQ = state.current?.pendingDispatcherQuestion ?? null;
+          if (role === "agent" && pendingQ) {
+            if (state.current) state.current.pendingDispatcherQuestion = null;
+            pushSSE({
+              type: "transcript_annotation",
+              data: {
+                incident_id,
+                icon: "💬",
+                label: `Agent asked caller: ${text}`,
+                color: "cyan",
+              },
+            });
+            // Still accumulate into transcript/report state below — no regular SSE push
+          } else {
+            // Push transcript SSE to dispatcher dashboard
+            pushSSE({
+              type: "transcript_update",
+              data: {
+                incident_id,
+                role: role === "agent" ? "ai" : "caller",
+                text,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
+
           // Accumulate transcript in call state for report agent
           if (state.current) {
             state.current.transcript.push({
@@ -238,12 +295,80 @@ async function handleCallStart(
             });
             state.current.transcriptTurnsSinceLastReport += 1;
 
+            // Trigger 3-second debounced extraction after each AI turn
+            if (role === "agent") {
+              const simplifiedTranscript = state.current.transcript.map((t) => ({
+                role: t.role,
+                text: t.text,
+              }));
+              maybeExtract(incident_id, simplifiedTranscript);
+            }
+
             // Trigger report after every 5 new transcript turns
             if (state.current.transcriptTurnsSinceLastReport >= 5) {
               state.current.transcriptTurnsSinceLastReport = 0;
               triggerReportUpdate(ws, state.current).catch((err: unknown) => {
                 console.error("[report] transcript-triggered report failed:", err);
               });
+            }
+
+            // Evaluate escalation need after each caller turn
+            if (role === "caller" && state.current.incidentPriority) {
+              const extraction = getExtraction(incident_id);
+              const suggestion = evaluateEscalation(
+                state.current.transcript.map((t) => ({ role: t.role, text: t.text })),
+                extraction,
+                state.current.incidentPriority,
+                [] // dispatched dept types — empty for now; full wiring needs unit type lookup
+              );
+              if (suggestion) {
+                pushSSE({
+                  type: "escalation_suggestion",
+                  data: {
+                    incident_id,
+                    reason: suggestion.reason,
+                    suggested_units: suggestion.suggested_units,
+                  },
+                });
+              }
+            }
+
+            // After each caller turn, try to extract answers to any pending dispatch Q&A
+            if (role === "caller") {
+              void (async () => {
+                try {
+                  const db = getDb();
+                  const questions = await dbGetDispatchQuestions(db, incident_id);
+                  const unanswered = questions.filter((q) => q.answer === null);
+                  console.log(`[callHandler] Caller turn finished. Pending dispatch Q&A count: ${unanswered.length}`);
+                  if (unanswered.length === 0) return;
+
+                  const simplifiedTranscript = state.current
+                    ? state.current.transcript.map((t) => ({ role: t.role as "caller" | "agent", text: t.text }))
+                    : [];
+
+                  for (const q of unanswered) {
+                    console.log(`[callHandler] Checking if transcript answers QA: "${q.question}"`);
+                    const answer = await extractAnswer(q.question, simplifiedTranscript);
+                    if (answer) {
+                      console.log(`[callHandler] Found answer! "${answer}". Broadcasting SSE answer_update.`);
+                      await dbUpdateDispatchQuestion(db, q.id, answer);
+                      pushSSE({
+                        type: "answer_update",
+                        data: { incident_id, question: q.question, answer },
+                      });
+                      pushSSE({
+                        type: "transcript_annotation",
+                        data: { incident_id, icon: "✅", label: "Caller answered question", color: "green" },
+                      });
+                    } else {
+                      console.log(`[callHandler] QA "${q.question}" still unanswered.`);
+                    }
+                  }
+                } catch (err) {
+                  console.error("[qa] answer extraction failed:", err instanceof Error ? err.message : String(err));
+                }
+              })();
             }
           }
         },
@@ -280,6 +405,9 @@ async function handleCallStart(
     return;
   }
 
+  // Register session for dispatcher injection
+  registerSession(incident_id, session);
+
   state.current = {
     incident_id,
     session,
@@ -296,7 +424,9 @@ async function handleCallStart(
     incidentType: null,
     incidentPriority: null,
     incidentStatus: "active",
+    pendingDispatcherQuestion: null,
   };
+  activeCallStates.set(incident_id, state.current);
 
   // Start 30-second report interval
   state.current.reportIntervalId = setInterval(() => {
@@ -319,6 +449,7 @@ async function handleCallEnd(
   if (!state.current) return;
   const { incident_id, session } = state.current;
   clearReportInterval(state.current);
+  activeCallStates.delete(incident_id);
   state.current = null;
 
   try {
@@ -346,6 +477,10 @@ async function finalizeCallById(
   ws: BunServerWebSocket,
   incident_id: string
 ): Promise<void> {
+  // Remove from session registry + cancel any pending extraction
+  deregisterSession(incident_id);
+  cancelExtraction(incident_id);
+
   try {
     // Export transcript to S3
     const transcriptData = await exportTranscript(incident_id);

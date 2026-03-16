@@ -45,10 +45,9 @@ const PRIORITY_KEYWORDS = [
 
 const bedrockClient = new BedrockRuntimeClient({
   region: BEDROCK_REGION,
-  credentials: {
-    accessKeyId: BEDROCK_KEY,
-    secretAccessKey: BEDROCK_SECRET,
-  },
+  ...(BEDROCK_KEY && BEDROCK_SECRET
+    ? { credentials: { accessKeyId: BEDROCK_KEY, secretAccessKey: BEDROCK_SECRET } }
+    : {}),
 });
 
 async function embedText(text: string): Promise<Float32Array> {

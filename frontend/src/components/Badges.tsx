@@ -41,17 +41,25 @@ export function PriorityBadge({ priority }: { priority: IncidentPriority }) {
 // ---------------------------------------------------------------------------
 
 const STATUS_LABELS: Record<IncidentStatus, string> = {
-  active: "ACTIVE",
+  active:     "ACTIVE",
+  classified: "CLASSIFIED",
   dispatched: "DISPATCHED",
-  resolved: "RESOLVED",
-  cancelled: "CANCELLED",
+  en_route:   "EN ROUTE",
+  on_scene:   "ON SCENE",
+  completed:  "COMPLETED",
+  resolved:   "RESOLVED",
+  cancelled:  "CANCELLED",
 };
 
 const STATUS_STYLES: Record<IncidentStatus, { bg: string; color: string; border: string }> = {
-  active:     { bg: "#000000", color: "#ffffff", border: "#000000" },
-  dispatched: { bg: "#444444", color: "#ffffff", border: "#444444" },
-  resolved:   { bg: "#f0f0f0", color: "#666666", border: "#cccccc" },
-  cancelled:  { bg: "#f0f0f0", color: "#999999", border: "#cccccc" },
+  active:     { bg: "#78350f", color: "#fde68a", border: "#d97706" },   // amber — needs attention
+  classified: { bg: "#1e3a5f", color: "#93c5fd", border: "#2563eb" },   // blue — being assessed
+  dispatched: { bg: "#2e1065", color: "#c4b5fd", border: "#7c3aed" },   // indigo/purple — units assigned
+  en_route:   { bg: "#0c3347", color: "#67e8f9", border: "#0891b2" },   // cyan — units moving
+  on_scene:   { bg: "#14532d", color: "#86efac", border: "#16a34a" },   // green — units arrived
+  completed:  { bg: "#1e293b", color: "#94a3b8", border: "#475569" },   // slate — closed
+  resolved:   { bg: "#1e293b", color: "#94a3b8", border: "#475569" },   // slate — closed
+  cancelled:  { bg: "#450a0a", color: "#fca5a5", border: "#991b1b" },   // dark red — cancelled
 };
 
 export function StatusBadge({ status }: { status: IncidentStatus }) {
@@ -79,13 +87,13 @@ export function StatusBadge({ status }: { status: IncidentStatus }) {
 // ---------------------------------------------------------------------------
 
 const TYPE_ICONS: Record<IncidentType, string> = {
-  fire:         "FIRE",
-  medical:      "MED",
-  police:       "PD",
-  traffic:      "MVA",
-  hazmat:       "HZM",
+  fire:         "DFB",
+  medical:      "NAS",
+  police:       "GARDA",
+  traffic:      "RTC",
+  hazmat:       "HAZMAT",
   search_rescue: "SAR",
-  other:        "OTH",
+  other:        "OTHER",
 };
 
 export function TypeChip({ type }: { type: IncidentType }) {

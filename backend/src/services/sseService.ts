@@ -9,7 +9,7 @@
  *   Anywhere    — call sseBroadcast(event) to push to all clients
  */
 
-import type { SseEvent, SseEventType } from "../types/index.ts";
+import type { SseEvent, SseEventType, DashboardSSEEvent } from "../types/index.ts";
 
 // ---------------------------------------------------------------------------
 // Client registry
@@ -121,6 +121,35 @@ export function sseSend(
 // ---------------------------------------------------------------------------
 
 function encodeSSE(message: { type: string; data: unknown }): string {
-  const json = JSON.stringify({ event: message.type, ...message.data });
+  const dataObj = typeof message.data === "object" && message.data !== null ? message.data as Record<string, unknown> : {};
+  const json = JSON.stringify({ event: message.type, ...dataObj });
   return `event: ${message.type}\ndata: ${json}\n\n`;
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard typed push (new dispatch events)
+// ---------------------------------------------------------------------------
+
+/**
+ * Push a typed DashboardSSEEvent to all connected clients.
+ * Wire format: `event: <type>\ndata: <JSON of data field>\n\n`
+ */
+export function pushSSE(event: DashboardSSEEvent): void {
+  if (clients.size === 0) return;
+
+  const payload = `event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`;
+  const encoded = new TextEncoder().encode(payload);
+  const dead: string[] = [];
+
+  for (const [id, client] of clients) {
+    try {
+      client.controller.enqueue(encoded);
+    } catch {
+      dead.push(id);
+    }
+  }
+
+  for (const id of dead) {
+    clients.delete(id);
+  }
 }
