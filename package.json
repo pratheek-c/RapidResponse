@@ -10,5 +10,8 @@
     "build:frontend": "bun run --filter frontend build",
     "test": "bun test",
     "test:backend": "bun test --filter backend"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
   }
 }
