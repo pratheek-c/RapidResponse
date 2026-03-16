@@ -121,7 +121,8 @@ export function sseSend(
 // ---------------------------------------------------------------------------
 
 function encodeSSE(message: { type: string; data: unknown }): string {
-  const json = JSON.stringify({ event: message.type, ...message.data });
+  const dataObj = typeof message.data === "object" && message.data !== null ? message.data as Record<string, unknown> : {};
+  const json = JSON.stringify({ event: message.type, ...dataObj });
   return `event: ${message.type}\ndata: ${json}\n\n`;
 }
 

@@ -183,7 +183,7 @@ Your job:
   // Send 1 second of silence to prime
   const silence = new Uint8Array(32000);
   let bin = "";
-  for (let i = 0; i < silence.length; i++) bin += String.fromCharCode(silence[i]);
+  for (let i = 0; i < silence.length; i++) bin += String.fromCharCode(silence[i]!);
   console.log("→ audioInput (1s silence)");
   yield enc("audioInput", { promptName, contentName: audioCN, content: btoa(bin) });
 
@@ -209,11 +209,14 @@ try {
   const response = await client.send(cmd);
   console.log("✓ client.send() succeeded — iterating response.body...");
 
+  if (!response.body) {
+    console.log("✗ response.body is undefined");
+  } else {
   let eventCount = 0;
   for await (const event of response.body) {
     eventCount++;
     try {
-      const raw = event as Record<string, unknown>;
+      const raw = (event as unknown) as Record<string, unknown>;
       let parsed: Record<string, unknown>;
       if ("chunk" in raw) {
         const bytes = (raw["chunk"] as Record<string, unknown>)["bytes"] as Uint8Array;
@@ -244,6 +247,7 @@ try {
     }
   }
   console.log(`Done. Total events: ${eventCount}`);
+  }
 } catch (err) {
   const msg = err instanceof Error ? err.message
     : JSON.stringify(err, Object.getOwnPropertyNames(err as object));

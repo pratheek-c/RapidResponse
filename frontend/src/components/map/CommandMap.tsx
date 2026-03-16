@@ -73,6 +73,7 @@ type CommandMapProps = {
   onSelectIncident: (incidentId: string) => void;
   dispatcherLocation?: LatLng | null;
   onRouteInfo?: (info: { distanceMeters: number; durationSeconds: number } | null) => void;
+  ownUnitId?: string;
 };
 
 export function CommandMap({
@@ -82,6 +83,7 @@ export function CommandMap({
   onSelectIncident,
   dispatcherLocation,
   onRouteInfo,
+  ownUnitId,
 }: CommandMapProps) {
   const selectedIncident = incidents.find((i) => i.id === selectedIncidentId) ?? null;
 
@@ -105,7 +107,7 @@ export function CommandMap({
           />
         ))}
         {units.map((unit) => (
-          <UnitMarker key={unit.id} unit={unit} />
+          <UnitMarker key={unit.id} unit={unit} isOwnUnit={ownUnitId === unit.id} />
         ))}
         {dispatcherLocation != null && (
           <DispatcherMarker

@@ -16,7 +16,7 @@ const MIGRATIONS_DIR = resolve(import.meta.dir, "./db/migrations");
 async function runMigrations(): Promise<void> {
   const db = createClient({
     url: env.LIBSQL_URL,
-    authToken: env.LIBSQL_AUTH_TOKEN,
+    ...(env.LIBSQL_AUTH_TOKEN ? { authToken: env.LIBSQL_AUTH_TOKEN } : {}),
   });
 
   try {
@@ -68,7 +68,7 @@ async function main(): Promise<void> {
   const lanceDb = await getLanceDb();
   await initCollections(lanceDb);
 
-  const server = createServer();
+  createServer();
   console.log(`[startup] RapidResponse.ai backend listening on port ${env.PORT}`);
 }
 

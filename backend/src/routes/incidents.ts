@@ -25,7 +25,7 @@ export async function handleIncidents(req: Request): Promise<Response> {
       const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
 
       try {
-        const incidents = await listIncidents({ status, limit, offset });
+        const incidents = await listIncidents({ ...(status !== undefined ? { status } : {}), limit, offset });
         return json({ ok: true, data: incidents });
       } catch (err) {
         return jsonError(err, 500);

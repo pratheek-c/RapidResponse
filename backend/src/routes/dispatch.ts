@@ -43,6 +43,47 @@ import type {
   SaveReportRequest,
 } from "../types/index.ts";
 
+// ---------------------------------------------------------------------------
+// Role guards
+// ---------------------------------------------------------------------------
+
+function requireRole(role: "dispatcher" | "unit_officer", suppliedRole: string | undefined): void {
+  if (suppliedRole !== role) {
+    throw Object.assign(new Error(`Action requires role: ${role}`), { status: 403 });
+  }
+}
+
+function requireOwnIncident(
+  suppliedRole: string | undefined,
+  suppliedUnitId: string | undefined,
+  assignedUnitsJson: string | null
+): void {
+  if (suppliedRole === "dispatcher") return;
+  const assigned: string[] = assignedUnitsJson ? (JSON.parse(assignedUnitsJson) as string[]) : [];
+  if (!suppliedUnitId || !assigned.includes(suppliedUnitId)) {
+    throw Object.assign(new Error("You are not assigned to this incident"), { status: 403 });
+  }
+}
+
+function requireOwnUnit(
+  suppliedRole: string | undefined,
+  suppliedUnitId: string | undefined,
+  requestedUnitId: string
+): void {
+  if (suppliedRole === "dispatcher") return;
+  if (suppliedUnitId !== requestedUnitId) {
+    throw Object.assign(new Error("You can only assign yourself"), { status: 403 });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helper to check for a role-guard error and return a 403 Response
+// ---------------------------------------------------------------------------
+
+function isForbiddenError(err: unknown): err is Error & { status: 403 } {
+  return err instanceof Error && (err as Error & { status?: number }).status === 403;
+}
+
 export async function handleDispatch(req: Request): Promise<Response> {
   const url = new URL(req.url);
   // Strip leading /dispatch
@@ -95,6 +136,17 @@ export async function handleDispatch(req: Request): Promise<Response> {
     try {
       console.log(`[dispatch] POST /question received for incident ${input.incident_id}: "${input.question}"`);
       const db = getDb();
+
+      // Role guard — unit officers can only ask questions on their own incident
+      if (input.role) {
+        const incidentForGuard = await getIncident(input.incident_id);
+        try {
+          requireOwnIncident(input.role, input.officer_id, incidentForGuard?.assigned_units ?? null);
+        } catch (err) {
+          if (isForbiddenError(err)) return json({ ok: false, error: (err as Error).message }, 403);
+          throw err;
+        }
+      }
 
       // Log action
       await dbCreateDispatchAction(db, {
@@ -165,6 +217,18 @@ export async function handleDispatch(req: Request): Promise<Response> {
       return badRequest("incident_id, reason, and requested_unit_types are required");
     }
     try {
+      // Role guard for escalate
+      if ((input as unknown as Record<string, unknown>)["role"]) {
+        const role = (input as unknown as Record<string, unknown>)["role"] as string;
+        const officerId = (input as unknown as Record<string, unknown>)["officer_id"] as string | undefined;
+        const incidentForGuard = await getIncident(input.incident_id);
+        try {
+          requireOwnIncident(role, officerId, incidentForGuard?.assigned_units ?? null);
+        } catch (err) {
+          if (isForbiddenError(err)) return json({ ok: false, error: (err as Error).message }, 403);
+          throw err;
+        }
+      }
       const result = await escalateIncident(input);
       const message = buildDispatchMessage(input.requested_unit_types);
       injectTextIntoSession(input.incident_id, message).catch(() => { /* non-fatal */ });
@@ -179,6 +243,18 @@ export async function handleDispatch(req: Request): Promise<Response> {
     const input = body as CompleteRequest;
     if (!input.incident_id) return badRequest("incident_id is required");
     try {
+      // Role guard for complete
+      if ((input as unknown as Record<string, unknown>)["role"]) {
+        const role = (input as unknown as Record<string, unknown>)["role"] as string;
+        const officerId = (input as unknown as Record<string, unknown>)["officer_id"] as string | undefined;
+        const incidentForGuard = await getIncident(input.incident_id);
+        try {
+          requireOwnIncident(role, officerId, incidentForGuard?.assigned_units ?? null);
+        } catch (err) {
+          if (isForbiddenError(err)) return json({ ok: false, error: (err as Error).message }, 403);
+          throw err;
+        }
+      }
       const db = getDb();
       const now = new Date().toISOString();
 
@@ -256,9 +332,13 @@ export async function handleDispatch(req: Request): Promise<Response> {
     if (!input.incident_id || !input.unit_id) {
       return badRequest("incident_id and unit_id are required");
     }
-    // Role check — permissive: read from body for now
-    if (input.role && input.role !== "unit_officer") {
-      return json({ ok: false, error: "Only unit officers can take incidents" }, 403);
+    // Role check — unit officers only; must be taking themselves
+    try {
+      requireRole("unit_officer", input.role);
+      requireOwnUnit(input.role, input.unit_id, input.unit_id);
+    } catch (err) {
+      if (isForbiddenError(err)) return json({ ok: false, error: err.message }, 403);
+      throw err;
     }
     try {
       const db = getDb();
@@ -321,12 +401,24 @@ export async function handleDispatch(req: Request): Promise<Response> {
     if (!input.incident_id || !input.requesting_unit || !Array.isArray(input.requested_types) || !input.urgency) {
       return badRequest("incident_id, requesting_unit, requested_types, and urgency are required");
     }
-    if (input.role && input.role !== "unit_officer") {
-      return json({ ok: false, error: "Only unit officers can request backup" }, 403);
+    try {
+      requireRole("unit_officer", input.role);
+    } catch (err) {
+      if (isForbiddenError(err)) return json({ ok: false, error: err.message }, 403);
+      throw err;
     }
     try {
       const db = getDb();
       const { dbCreateBackupRequest } = await import("../db/libsql.ts");
+
+      // Load incident to verify the requesting unit is assigned
+      const incidentForGuard = await getIncident(input.incident_id);
+      try {
+        requireOwnIncident(input.role, input.requesting_unit, incidentForGuard?.assigned_units ?? null);
+      } catch (err) {
+        if (isForbiddenError(err)) return json({ ok: false, error: err.message }, 403);
+        throw err;
+      }
 
       // Find on-duty units to alert — alert all available units not on this incident
       const unitsResult = await db.execute({
@@ -375,8 +467,11 @@ export async function handleDispatch(req: Request): Promise<Response> {
     if (!input.incident_id || !input.responding_unit) {
       return badRequest("incident_id and responding_unit are required");
     }
-    if (input.role && input.role !== "unit_officer") {
-      return json({ ok: false, error: "Only unit officers can respond to backup requests" }, 403);
+    try {
+      requireRole("unit_officer", input.role);
+    } catch (err) {
+      if (isForbiddenError(err)) return json({ ok: false, error: err.message }, 403);
+      throw err;
     }
     try {
       const db = getDb();

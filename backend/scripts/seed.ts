@@ -18,7 +18,7 @@ const MIGRATIONS_DIR = resolve(import.meta.dir, "../src/db/migrations");
 async function getDb() {
   const url = process.env["LIBSQL_URL"] ?? "file:./data/rapidresponse.db";
   const authToken = process.env["LIBSQL_AUTH_TOKEN"];
-  const db = createClient({ url, authToken });
+  const db = createClient({ url, ...(authToken ? { authToken } : {}) });
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS schema_migrations (

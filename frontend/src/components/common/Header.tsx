@@ -5,9 +5,11 @@ import { DeptIcon } from "@/components/common/DeptIcon";
 import { LiveIndicator } from "@/components/common/LiveIndicator";
 import { useSession } from "@/context/SessionContext";
 
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
 type HeaderProps = {
   connected: boolean;
-  department: Department;
+  department: Department | null;
   userLabel: string;
   onSignOut: () => Promise<void>;
 };
@@ -114,8 +116,19 @@ export function Header({ connected, department, userLabel, onSignOut }: HeaderPr
   const [signOutPending, setSignOutPending] = useState(false);
   const { session, clearSession } = useSession();
 
-  function handleGoOffDuty() {
-    // For unit officers, "Go Off Duty" clears the session and redirects to login
+  async function handleGoOffDuty() {
+    const unitId = session?.unit?.id;
+    if (unitId) {
+      try {
+        await fetch(`${API_BASE}/units/go-off-duty`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ unit_id: unitId }),
+        });
+      } catch {
+        // non-fatal — proceed to sign out regardless
+      }
+    }
     clearSession();
     void onSignOut();
   }
@@ -189,7 +202,7 @@ export function Header({ connected, department, userLabel, onSignOut }: HeaderPr
           {/* Role badge — replaces generic department pill for role-aware display */}
           {session ? (
             <RoleBadge onGoOffDuty={session.role === "unit_officer" ? handleGoOffDuty : undefined} />
-          ) : (
+          ) : department ? (
             <div className="hidden items-center gap-1 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-xs text-slate-300 md:flex">
               <DeptIcon department={department} />
               <span className="font-semibold uppercase tracking-wide">
@@ -202,7 +215,7 @@ export function Header({ connected, department, userLabel, onSignOut }: HeaderPr
                       : department.toUpperCase()}
               </span>
             </div>
-          )}
+          ) : null}
 
           <div className="hidden items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-xs text-slate-300 sm:flex">
             <RadioTower className="h-3.5 w-3.5 text-sky-300" />

@@ -17,6 +17,7 @@ import {
 } from "../db/libsql.ts";
 import type { UnitStatus, UnitType } from "../types/index.ts";
 import { haversine, etaMinutes } from "../utils/haversine.ts";
+import { pushSSE } from "../services/sseService.ts";
 
 // ---------------------------------------------------------------------------
 // Mock data types (from backend/data/mock/dispatchers.json)
@@ -106,7 +107,7 @@ export async function handleUnits(req: Request): Promise<Response> {
       const type = url.searchParams.get("type") ?? undefined;
 
       try {
-        const units = await dbListUnits(db, { status, type });
+        const units = await dbListUnits(db, { ...(status !== undefined ? { status } : {}), ...(type !== undefined ? { type } : {}) });
         return json({ ok: true, data: units });
       } catch (err) {
         return jsonError(err, 500);
@@ -149,7 +150,42 @@ export async function handleUnits(req: Request): Promise<Response> {
   const id = pathParts[1];
   if (!id) return badRequest("Missing unit ID");
 
-  // GET /units/mock?lat=X&lng=Y
+  // POST /units/go-off-duty
+  if (id === "go-off-duty" && req.method === "POST") {
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return badRequest("Invalid JSON body");
+    }
+
+    const input = body as { unit_id?: string };
+    if (!input.unit_id) return badRequest("unit_id is required");
+
+    try {
+      const unit = await dbGetUnit(db, input.unit_id);
+      if (!unit) return json({ ok: false, error: "Unit not found" }, 404);
+
+      // If unit was assigned to an incident, push a status_change for that incident
+      if (unit.current_incident_id) {
+        pushSSE({
+          type: "status_change",
+          data: { incident_id: unit.current_incident_id, status: "active", unit_id: input.unit_id },
+        });
+      }
+
+      await dbUpdateUnitStatus(db, input.unit_id, "available", null);
+
+      pushSSE({
+        type: "unit_status_change",
+        data: { unit_id: input.unit_id, status: "available", assigned_incident: null },
+      });
+
+      return json({ ok: true });
+    } catch (err) {
+      return jsonError(err, 500);
+    }
+  }
   if (id === "mock" && req.method === "GET") {
     const latStr = url.searchParams.get("lat");
     const lngStr = url.searchParams.get("lng");

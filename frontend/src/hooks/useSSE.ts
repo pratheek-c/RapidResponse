@@ -15,7 +15,9 @@ type DashboardEventType =
   | "backup_requested"
   | "backup_accepted"
   | "unit_status_change"
-  | "transcript_annotation";
+  | "transcript_annotation"
+  | "assignment_suggested"
+  | "unit_auto_dispatched";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -39,6 +41,8 @@ const EVENT_TYPES: DashboardEventType[] = [
   "backup_accepted",
   "unit_status_change",
   "transcript_annotation",
+  "assignment_suggested",
+  "unit_auto_dispatched",
 ];
 
 export function useSSE() {

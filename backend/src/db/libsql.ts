@@ -38,7 +38,7 @@ export function getDb(): Client {
   if (!_client) {
     _client = createClient({
       url: env.LIBSQL_URL,
-      authToken: env.LIBSQL_AUTH_TOKEN,
+      ...(env.LIBSQL_AUTH_TOKEN ? { authToken: env.LIBSQL_AUTH_TOKEN } : {}),
     });
   }
   return _client;
@@ -84,7 +84,7 @@ export async function dbCreateIncident(
       cad_number,
       caller_id: input.caller_id,
       caller_location: input.caller_location,
-      caller_address: input.caller_address,
+      caller_address: input.caller_address ?? "",
       created_at: now,
       updated_at: now,
     },

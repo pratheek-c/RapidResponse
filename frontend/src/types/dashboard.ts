@@ -223,6 +223,27 @@ export type SseTranscriptAnnotationEvent = {
   };
 };
 
+export type SseAssignmentSuggestedEvent = {
+  type: "assignment_suggested";
+  data: {
+    incident_id: string;
+    suggested_unit: string;
+    unit_type: string;
+    distance_km: number;
+    priority: string;
+  };
+};
+
+export type SseUnitAutoDispatchedEvent = {
+  type: "unit_auto_dispatched";
+  data: {
+    incident_id: string;
+    unit_id: string;
+    unit_type: string;
+    auto: true;
+  };
+};
+
 export type SSEEvent =
   | SseIncidentClassifiedEvent
   | SseTranscriptUpdateEvent
@@ -236,7 +257,9 @@ export type SSEEvent =
   | SseBackupRequestedEvent
   | SseBackupAcceptedEvent
   | SseUnitStatusChangeEvent
-  | SseTranscriptAnnotationEvent;
+  | SseTranscriptAnnotationEvent
+  | SseAssignmentSuggestedEvent
+  | SseUnitAutoDispatchedEvent;
 
 export type ApiSuccess<T> = { ok: true; data: T };
 export type ApiError = { ok: false; error: string };

@@ -55,7 +55,7 @@ export type Incident = {
 export type CreateIncidentInput = {
   caller_id: string;
   caller_location: string; // "lat, lng" GPS string
-  caller_address: string;  // reverse-geocoded human address
+  caller_address?: string;  // reverse-geocoded human address (optional, defaults to "")
 };
 
 export type UpdateIncidentInput = {
@@ -384,6 +384,7 @@ export type QuestionRequest = {
   incident_id: string;
   question: string;
   officer_id: string;
+  role?: string;
 };
 
 export type EscalateRequest = {
@@ -470,7 +471,9 @@ export type DashboardSSEEvent =
   | { type: "backup_requested";      data: { incident_id: string; requesting_unit: string; requested_types: Department[]; urgency: "routine" | "urgent" | "emergency"; message: string; target_units: string[] } }
   | { type: "backup_accepted";       data: { incident_id: string; responding_unit: string; responding_unit_type: Department } }
   | { type: "unit_status_change";    data: { unit_id: string; status: UnitStatus; assigned_incident: string | null } }
-  | { type: "transcript_annotation"; data: { incident_id: string; icon: string; label: string; color: string } };
+  | { type: "transcript_annotation"; data: { incident_id: string; icon: string; label: string; color: string } }
+  | { type: "assignment_suggested";  data: { incident_id: string; suggested_unit: string; unit_type: string; distance_km: number; priority: string } }
+  | { type: "unit_auto_dispatched";  data: { incident_id: string; unit_id: string; unit_type: string; auto: true } };
 
 // ---------------------------------------------------------------------------
 // Role-based dispatch — new types (009)

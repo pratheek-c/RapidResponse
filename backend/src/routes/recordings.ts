@@ -10,7 +10,6 @@ import { getDb } from "../db/libsql.ts";
 import {
   getAudioPlaybackUrl,
   getTranscriptUrl,
-  audioChunkKey,
 } from "../services/storageService.ts";
 
 export async function handleRecordings(req: Request): Promise<Response> {

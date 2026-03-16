@@ -25,7 +25,7 @@ import type {
 } from "../types/index.ts";
 import { createIncident, updateIncident } from "../services/incidentService.ts";
 import { saveAgentTurn, saveCallerTurn, exportTranscript } from "../services/transcriptionService.ts";
-import { uploadTranscript, uploadAudioChunk } from "../services/storageService.ts";
+import { uploadTranscript } from "../services/storageService.ts";
 import {
   startNovaSession,
   registerSession,
@@ -175,8 +175,9 @@ async function handleCallStart(
 
   try {
     const coordParts = msg.location.split(",").map((s) => parseFloat(s.trim()));
-    if (coordParts.length === 2 && !isNaN(coordParts[0]) && !isNaN(coordParts[1])) {
-      const [lat, lng] = coordParts;
+    if (coordParts.length === 2 && !isNaN(coordParts[0]!) && !isNaN(coordParts[1]!)) {
+      const lat = coordParts[0]!;
+      const lng = coordParts[1]!;
       const { getMockUnitsWithDistance } = await import("../routes/units.ts");
       mockUnitsWithDistance = await getMockUnitsWithDistance(lat, lng);
       available_units = mockUnitsWithDistance.map((u) => ({

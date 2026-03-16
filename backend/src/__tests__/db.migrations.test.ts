@@ -42,7 +42,17 @@ async function applyMigrations(db: Client): Promise<void> {
     )
   `);
 
-  const migrationFiles = ["001_initial.sql", "002_add_indexes.sql"];
+  const migrationFiles = [
+    "001_initial.sql",
+    "002_add_indexes.sql",
+    "003_add_caller_address.sql",
+    "004_dispatch_tables.sql",
+    "005_fix_units_fk.sql",
+    "006_fix_transcription_dispatches_fk.sql",
+    "007_add_cad_number.sql",
+    "008_add_covert_distress.sql",
+    "009_roles.sql",
+  ];
 
   for (const file of migrationFiles) {
     const sql = await readFile(join(MIGRATIONS_DIR, file), "utf-8");
@@ -105,9 +115,12 @@ describe("DB Migrations", () => {
     expect(result.rows).toHaveLength(1);
   });
 
-  it("creates indexes from migration 002", async () => {
+  it("creates indexes for incidents status", async () => {
+    // migration 002 creates idx_incidents_status, but migration 004 drops+recreates
+    // the incidents table, which removes the old index. Migration 004 creates
+    // idx_incidents_status_v2 as the replacement.
     const result = await db.execute(
-      "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_incidents_status'"
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_incidents_status_v2'"
     );
     expect(result.rows).toHaveLength(1);
   });

@@ -7,10 +7,12 @@ import { CommandMap } from "@/components/map/CommandMap";
 import { IncidentList } from "@/components/incidents/IncidentList";
 import { IncidentDetail } from "@/components/incidents/IncidentDetail";
 import { BackupAlertBanner } from "@/components/common/BackupAlertBanner";
+import { AssignmentAlertBanner } from "@/components/common/AssignmentAlertBanner";
 import { useAuth } from "@/hooks/useAuth";
 import { useIncidents } from "@/hooks/useIncidents";
 import { useUnits } from "@/hooks/useUnits";
 import { useDispatcherLocation } from "@/hooks/useDispatcherLocation";
+import { useSession } from "@/context/SessionContext";
 import { filterIncidentsByTab, type Filter } from "@/utils/incidentFilters";
 import type { DashboardIncident } from "@/types/dashboard";
 import { DEFAULT_MAP_CENTER } from "@/config/constants";
@@ -254,6 +256,7 @@ function playP1Tone() {
 
 export function DashboardView() {
   const { user, loading, isAuthenticated, department, signOut } = useAuth();
+  const { session } = useSession();
   const { incidents, connected } = useIncidents();
   const { units } = useUnits();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -312,7 +315,7 @@ export function DashboardView() {
     );
   }
 
-  if (!isAuthenticated || !department) {
+  if (!isAuthenticated || !session) {
     return <Navigate to="/login" replace />;
   }
 
@@ -327,6 +330,9 @@ export function DashboardView() {
         userLabel={userLabel}
         onSignOut={signOut}
       />
+
+      {/* Assignment alert banner — shown to targeted unit officers */}
+      <AssignmentAlertBanner onSelectIncident={setSelectedId} />
 
       {/* Backup alert banner — shown when a backup_requested SSE event arrives */}
       <BackupAlertBanner />
@@ -364,6 +370,7 @@ export function DashboardView() {
               onSelectIncident={setSelectedId}
               dispatcherLocation={dispatcherLocation}
               onRouteInfo={setRouteInfo}
+              ownUnitId={session?.unit?.id}
             />
           </div>
         </section>

@@ -29,6 +29,7 @@ import { searchProtocols } from "../services/ragService.ts";
 import { classifyIncident, flagCovertDistress } from "../services/incidentService.ts";
 import { dispatchUnit } from "../services/dispatchService.ts";
 import { pushSSE } from "../services/sseService.ts";
+import { autoAssign } from "./triageAgent.ts";
 import type {
   IncidentType,
   IncidentPriority,
@@ -873,6 +874,10 @@ async function executeTool(
         const priority = input["priority"] as IncidentPriority;
         const result = await classifyIncident(incident_id, type, priority);
         pushSSE({ type: "transcript_annotation", data: { incident_id, icon: "📊", label: "Incident classified", color: "blue" } });
+        // Fire-and-forget auto-assignment — non-fatal
+        autoAssign(incident_id, type as string, priority).catch((err: unknown) => {
+          console.error("[triage] autoAssign failed:", err instanceof Error ? err.message : String(err));
+        });
         return { success: true, data: { classified: true, type, priority, incident: result } };
       }
 

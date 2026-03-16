@@ -9,7 +9,7 @@
  * No real AWS credentials required — all Bedrock calls are mocked.
  */
 
-import { describe, it, expect, beforeEach, mock, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { createClient, type Client } from "@libsql/client";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -41,7 +41,17 @@ const MIGRATIONS_DIR = resolve(import.meta.dir, "../db/migrations");
 
 async function buildTestDb(): Promise<Client> {
   const db = createClient({ url: ":memory:" });
-  for (const file of ["001_initial.sql", "002_add_indexes.sql"]) {
+  for (const file of [
+    "001_initial.sql",
+    "002_add_indexes.sql",
+    "003_add_caller_address.sql",
+    "004_dispatch_tables.sql",
+    "005_fix_units_fk.sql",
+    "006_fix_transcription_dispatches_fk.sql",
+    "007_add_cad_number.sql",
+    "008_add_covert_distress.sql",
+    "009_roles.sql",
+  ]) {
     const sql = await readFile(join(MIGRATIONS_DIR, file), "utf-8");
     await db.executeMultiple(sql);
   }

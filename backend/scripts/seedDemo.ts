@@ -33,7 +33,7 @@ const MIGRATION_FILES = [
 const LIBSQL_URL = process.env["LIBSQL_URL"] ?? "file:./data/rapidresponse.db";
 const LIBSQL_AUTH_TOKEN = process.env["LIBSQL_AUTH_TOKEN"] ?? undefined;
 
-const db = createClient({ url: LIBSQL_URL, authToken: LIBSQL_AUTH_TOKEN });
+const db = createClient({ url: LIBSQL_URL, ...(LIBSQL_AUTH_TOKEN ? { authToken: LIBSQL_AUTH_TOKEN } : {}) });
 
 // ---------------------------------------------------------------------------
 // Deterministic IDs (stable across seed runs)
