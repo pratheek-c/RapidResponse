@@ -1,14 +1,14 @@
 /**
- * Demo seed script.
+ * Demo seed script — Dublin Emergency Services.
  *
- * Populates the database with realistic demo incidents, units, dispatch
- * actions, questions, and transcript turns for demonstration purposes.
+ * Populates the database with realistic Dublin-based demo incidents, units,
+ * dispatch actions, questions, and transcript turns for demonstration purposes.
+ * Emergency number: 112 (Ireland).
  *
  * Usage:
  *   bun backend/scripts/seedDemo.ts
  *
- * Safe to run multiple times — uses deterministic UUIDs so it won't
- * duplicate rows on repeat runs (INSERT OR IGNORE).
+ * Safe to run multiple times — clears all data first and reinserts.
  */
 
 import { createClient } from "@libsql/client";
@@ -40,14 +40,15 @@ const db = createClient({ url: LIBSQL_URL, authToken: LIBSQL_AUTH_TOKEN });
 // ---------------------------------------------------------------------------
 
 const IDS = {
-  // Units
+  // Units — Dublin Fire Brigade (FD), National Ambulance Service (AMB),
+  //         Garda Síochána (GD), HAZMAT, Search & Rescue
   u_fire1:    "11111111-0001-0001-0001-000000000001",
   u_fire2:    "11111111-0001-0001-0001-000000000002",
-  u_ems1:     "11111111-0002-0001-0001-000000000001",
-  u_ems2:     "11111111-0002-0001-0001-000000000002",
-  u_police1:  "11111111-0003-0001-0001-000000000001",
-  u_police2:  "11111111-0003-0001-0001-000000000002",
-  u_police3:  "11111111-0003-0001-0001-000000000003",
+  u_amb1:     "11111111-0002-0001-0001-000000000001",
+  u_amb2:     "11111111-0002-0001-0001-000000000002",
+  u_garda1:   "11111111-0003-0001-0001-000000000001",
+  u_garda2:   "11111111-0003-0001-0001-000000000002",
+  u_garda3:   "11111111-0003-0001-0001-000000000003",
   u_hazmat1:  "11111111-0004-0001-0001-000000000001",
   u_rescue1:  "11111111-0005-0001-0001-000000000001",
 
@@ -93,26 +94,69 @@ async function exec(sql: string, args: Record<string, string | number | null> = 
 }
 
 // ---------------------------------------------------------------------------
+// Migrations
+// ---------------------------------------------------------------------------
+
+async function runMigrations(): Promise<void> {
+  console.log("[seed] Ensuring schema is up to date...");
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    )
+  `);
+  const applied = new Set(
+    (await db.execute("SELECT version FROM schema_migrations")).rows.map(
+      (r) => r["version"] as string
+    )
+  );
+  for (const file of MIGRATION_FILES) {
+    const version = file.replace(".sql", "");
+    if (applied.has(version)) continue;
+    const sql = await readFile(join(MIGRATIONS_DIR, file), "utf-8");
+    await db.executeMultiple(sql);
+    await db.execute({
+      sql: "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+      args: [version, new Date().toISOString()],
+    });
+    console.log(`  [migrate] Applied: ${version}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Clear existing data
+// ---------------------------------------------------------------------------
+
+async function clearData(): Promise<void> {
+  console.log("[seed] Clearing existing data...");
+  await db.execute("DELETE FROM dispatch_questions");
+  await db.execute("DELETE FROM dispatch_actions");
+  await db.execute("DELETE FROM incident_units");
+  await db.execute("DELETE FROM dispatches");
+  await db.execute("DELETE FROM transcription_turns");
+  await db.execute("UPDATE units SET current_incident_id = NULL");
+  await db.execute("DELETE FROM incidents");
+  await db.execute("DELETE FROM units");
+}
+
+// ---------------------------------------------------------------------------
 // 1. Units
 // ---------------------------------------------------------------------------
 
 async function seedUnits(): Promise<void> {
   console.log("[seed] Inserting units...");
 
-  // Insert all units with current_incident_id = NULL first to avoid FK
-  // violations (the incidents they reference don't exist yet at this point).
-  // seedUnitLinks() below patches the FK column after incidents are inserted.
   const units: Array<[string, string, string, string]> = [
     // [id, unit_code, type, status]
     [IDS.u_fire1,   "FD-1",  "fire",   "dispatched"],
     [IDS.u_fire2,   "FD-2",  "fire",   "available"],
-    [IDS.u_ems1,    "EMS-1", "ems",    "on_scene"],
-    [IDS.u_ems2,    "EMS-2", "ems",    "available"],
-    [IDS.u_police1, "PD-1",  "police", "available"],
-    [IDS.u_police2, "PD-2",  "police", "dispatched"],
-    [IDS.u_police3, "PD-3",  "police", "available"],
+    [IDS.u_amb1,    "AMB-1", "ems",    "on_scene"],
+    [IDS.u_amb2,    "AMB-2", "ems",    "available"],
+    [IDS.u_garda1,  "GD-1",  "police", "available"],
+    [IDS.u_garda2,  "GD-2",  "police", "dispatched"],
+    [IDS.u_garda3,  "GD-3",  "police", "available"],
     [IDS.u_hazmat1, "HZ-1",  "hazmat", "available"],
-    [IDS.u_rescue1, "RS-1",  "rescue", "available"],
+    [IDS.u_rescue1, "SAR-1", "rescue", "available"],
   ];
 
   for (const [id, unit_code, type, status] of units) {
@@ -124,15 +168,13 @@ async function seedUnits(): Promise<void> {
   }
 }
 
-// Patch current_incident_id FK links after incidents have been inserted.
 async function seedUnitLinks(): Promise<void> {
   console.log("[seed] Patching unit current_incident_id links...");
 
   const links: Array<[string, string]> = [
-    // [unit_id, incident_id]
-    [IDS.u_fire1,   IDS.i_dispatched],
-    [IDS.u_police2, IDS.i_dispatched],
-    [IDS.u_ems1,    IDS.i_on_scene],
+    [IDS.u_fire1,  IDS.i_dispatched],
+    [IDS.u_garda2, IDS.i_dispatched],
+    [IDS.u_amb1,   IDS.i_on_scene],
   ];
 
   for (const [unit_id, incident_id] of links) {
@@ -145,7 +187,7 @@ async function seedUnitLinks(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Incidents
+// 2. Incidents — Dublin locations (lat,lng)
 // ---------------------------------------------------------------------------
 
 async function seedIncidents(): Promise<void> {
@@ -173,8 +215,8 @@ async function seedIncidents(): Promise<void> {
     {
       id: IDS.i_active,
       caller_id: "caller-demo-001",
-      caller_location: "37.7749,-122.4194",
-      caller_address: "Market St & 5th St, San Francisco, CA",
+      caller_location: "53.3498,-6.2603",
+      caller_address: "O'Connell Street, Dublin 1",
       status: "active",
       type: null,
       priority: null,
@@ -190,12 +232,12 @@ async function seedIncidents(): Promise<void> {
     {
       id: IDS.i_classified,
       caller_id: "caller-demo-006",
-      caller_location: "37.7830,-122.4080",
-      caller_address: "Union Square, San Francisco, CA",
+      caller_location: "53.3382,-6.2591",
+      caller_address: "St. Stephen's Green, Dublin 2",
       status: "classified",
       type: "medical",
       priority: "P2",
-      summary: "Caller reports person collapsed in Union Square plaza, possibly unconscious.",
+      summary: "Caller reports a person collapsed on the footpath near St. Stephen's Green North, possibly unconscious.",
       created_at: T(480),
       updated_at: T(420),
       accepted_at: null,
@@ -207,70 +249,70 @@ async function seedIncidents(): Promise<void> {
     {
       id: IDS.i_dispatched,
       caller_id: "caller-demo-002",
-      caller_location: "37.7850,-122.4080",
-      caller_address: "555 California St, San Francisco, CA",
+      caller_location: "53.3461,-6.2560",
+      caller_address: "Tara Street, Dublin 2",
       status: "dispatched",
       type: "fire",
       priority: "P1",
-      summary: "Smoke reported from 3rd floor office building. Building evacuation underway.",
+      summary: "Smoke reported from second-floor flat above a chipper on Tara Street. Building evacuation underway.",
       created_at: T(900),
       updated_at: T(600),
       accepted_at: T(750),
       completed_at: null,
       escalated: 0,
       officer_id: "officer-demo-001",
-      assigned_units: JSON.stringify([IDS.u_fire1, IDS.u_police2]),
+      assigned_units: JSON.stringify([IDS.u_fire1, IDS.u_garda2]),
     },
     {
       id: IDS.i_on_scene,
       caller_id: "caller-demo-003",
-      caller_location: "37.7900,-122.4000",
-      caller_address: "Pier 39, San Francisco, CA",
+      caller_location: "53.3588,-6.2857",
+      caller_address: "North Circular Road, Dublin 7",
       status: "on_scene",
-      type: "medical",
+      type: "traffic",
       priority: "P2",
-      summary: "Elderly tourist fell and sustained head injury at Pier 39. EMS on scene.",
+      summary: "Two-vehicle collision at NCR and Phibsborough Road junction. One occupant with suspected broken arm. Ambulance on scene.",
       created_at: T(2400),
       updated_at: T(900),
       accepted_at: T(2200),
       completed_at: null,
       escalated: 0,
       officer_id: "officer-demo-002",
-      assigned_units: JSON.stringify([IDS.u_ems1]),
+      assigned_units: JSON.stringify([IDS.u_amb1]),
     },
     {
       id: IDS.i_completed1,
       caller_id: "caller-demo-004",
-      caller_location: "37.7600,-122.4350",
-      caller_address: "Dolores Park, San Francisco, CA",
+      caller_location: "53.3457,-6.2651",
+      caller_address: "Temple Bar, Dublin 2",
       status: "completed",
       type: "police",
       priority: "P3",
-      summary: "Report of aggressive panhandling with minor altercation. Unit PD-2 responded, situation de-escalated. No arrests.",
+      summary: "Report of altercation outside a pub on Temple Bar. Garda responded, parties separated, no arrests made.",
       created_at: T(7200),
       updated_at: T(3600),
       accepted_at: T(7000),
       completed_at: T(3600),
       escalated: 0,
       officer_id: "officer-demo-001",
-      assigned_units: JSON.stringify([IDS.u_police2]),
+      assigned_units: JSON.stringify([IDS.u_garda2]),
     },
     {
       id: IDS.i_completed2,
       caller_id: "caller-demo-005",
-      caller_location: "37.8000,-122.4050",
-      caller_address: "Fisherman's Wharf, San Francisco, CA",
+      caller_location: "53.3659,-6.2748",
+      caller_address: "Phibsborough Road, Dublin 7",
       status: "completed",
-      type: "traffic",
-      priority: "P3",
-      summary: "Two-vehicle collision at Fisherman's Wharf. Minor injuries, tow requested. Roadway cleared within 45 minutes.",
+      type: "medical",
+      priority: "P2",
+      summary: "Caller reported elderly woman having difficulty breathing at residential address. Ambulance attended, patient stabilised and transported to Mater Hospital.",
       created_at: T(14400),
       updated_at: T(7200),
       accepted_at: T(14200),
       completed_at: T(7200),
       escalated: 0,
       officer_id: "officer-demo-002",
-      assigned_units: JSON.stringify([IDS.u_ems2, IDS.u_police1]),
+      assigned_units: JSON.stringify([IDS.u_amb2, IDS.u_garda1]),
     },
   ];
 
@@ -316,24 +358,24 @@ async function seedTranscripts(): Promise<void> {
   console.log("[seed] Inserting transcription turns...");
 
   const turns: Array<{ id: string; incident_id: string; role: string; text: string; timestamp_ms: number }> = [
-    // Active incident — call just started
-    { id: "tt-001-001", incident_id: IDS.i_active, role: "agent",  text: "911, what's your emergency?", timestamp_ms: 500 },
-    { id: "tt-001-002", incident_id: IDS.i_active, role: "caller", text: "Hi, yes — there's a man collapsed on the sidewalk outside the coffee shop on Market and Fifth.", timestamp_ms: 3200 },
-    { id: "tt-001-003", incident_id: IDS.i_active, role: "agent",  text: "Okay. Is he breathing?", timestamp_ms: 6100 },
-    { id: "tt-001-004", incident_id: IDS.i_active, role: "caller", text: "I don't know — I can't tell. He's not moving. There's a small crowd around him.", timestamp_ms: 9400 },
+    // Active incident — call just started, O'Connell Street
+    { id: "tt-001-001", incident_id: IDS.i_active,     role: "agent",  text: "112, what's your emergency?", timestamp_ms: 500 },
+    { id: "tt-001-002", incident_id: IDS.i_active,     role: "caller", text: "Hi, yes — there's a man collapsed on the footpath outside the Spire on O'Connell Street. He's not moving.", timestamp_ms: 3200 },
+    { id: "tt-001-003", incident_id: IDS.i_active,     role: "agent",  text: "Okay, is he breathing?", timestamp_ms: 6100 },
+    { id: "tt-001-004", incident_id: IDS.i_active,     role: "caller", text: "I can't tell — there's a crowd around him. He just fell down suddenly.", timestamp_ms: 9400 },
 
-    // Dispatched incident
-    { id: "tt-002-001", incident_id: IDS.i_dispatched, role: "agent",  text: "911, what's your emergency?", timestamp_ms: 500 },
-    { id: "tt-002-002", incident_id: IDS.i_dispatched, role: "caller", text: "There's smoke coming out of the third floor of our office building. We're evacuating now.", timestamp_ms: 2800 },
-    { id: "tt-002-003", incident_id: IDS.i_dispatched, role: "agent",  text: "Got it. What's the address?", timestamp_ms: 5200 },
-    { id: "tt-002-004", incident_id: IDS.i_dispatched, role: "caller", text: "555 California Street, San Francisco. It's a 20-story building.", timestamp_ms: 8700 },
-    { id: "tt-002-005", incident_id: IDS.i_dispatched, role: "agent",  text: "Fire units are on their way. Please make sure everyone is out and stay away from the building.", timestamp_ms: 12000 },
+    // Dispatched incident — fire on Tara Street
+    { id: "tt-002-001", incident_id: IDS.i_dispatched, role: "agent",  text: "112, what's your emergency?", timestamp_ms: 500 },
+    { id: "tt-002-002", incident_id: IDS.i_dispatched, role: "caller", text: "There's smoke coming out of the upstairs flat on Tara Street, just beside the chipper. People are coming out of the building.", timestamp_ms: 2800 },
+    { id: "tt-002-003", incident_id: IDS.i_dispatched, role: "agent",  text: "Got it. What's the exact address?", timestamp_ms: 5200 },
+    { id: "tt-002-004", incident_id: IDS.i_dispatched, role: "caller", text: "It's on Tara Street, just near the DART station. The smoke is getting worse.", timestamp_ms: 8700 },
+    { id: "tt-002-005", incident_id: IDS.i_dispatched, role: "agent",  text: "Dublin Fire Brigade are on their way. Please make sure everyone is out and stay well back from the building.", timestamp_ms: 12000 },
 
-    // On-scene incident
-    { id: "tt-003-001", incident_id: IDS.i_on_scene,   role: "agent",  text: "911, what's your emergency?", timestamp_ms: 400 },
-    { id: "tt-003-002", incident_id: IDS.i_on_scene,   role: "caller", text: "An elderly woman fell near the sea lion area. She's conscious but can't get up and says her head hurts.", timestamp_ms: 3100 },
-    { id: "tt-003-003", incident_id: IDS.i_on_scene,   role: "agent",  text: "EMS is on the way. Please keep her still and don't move her head.", timestamp_ms: 6200 },
-    { id: "tt-003-004", incident_id: IDS.i_on_scene,   role: "caller", text: "Okay, I'm staying with her. She says her name is Margaret. She's about 70.", timestamp_ms: 10500 },
+    // On-scene incident — RTC on North Circular Road
+    { id: "tt-003-001", incident_id: IDS.i_on_scene,   role: "agent",  text: "112, what's your emergency?", timestamp_ms: 400 },
+    { id: "tt-003-002", incident_id: IDS.i_on_scene,   role: "caller", text: "There's been a crash at the NCR junction — two cars. One driver looks injured, she's holding her arm.", timestamp_ms: 3100 },
+    { id: "tt-003-003", incident_id: IDS.i_on_scene,   role: "agent",  text: "Ambulance is on the way. Is she conscious and breathing?", timestamp_ms: 6200 },
+    { id: "tt-003-004", incident_id: IDS.i_on_scene,   role: "caller", text: "Yes, she's awake. She says her arm really hurts but she can breathe fine. Her name is Mary, she looks about fifty.", timestamp_ms: 10500 },
   ];
 
   for (const t of turns) {
@@ -356,9 +398,9 @@ async function seedDispatches(): Promise<void> {
     id: string; incident_id: string; unit_id: string;
     dispatched_at: string; arrived_at: string | null; cleared_at: string | null;
   }> = [
-    { id: IDS.d1, incident_id: IDS.i_dispatched, unit_id: IDS.u_fire1,   dispatched_at: T(750),  arrived_at: null,     cleared_at: null },
-    { id: IDS.d2, incident_id: IDS.i_dispatched, unit_id: IDS.u_police2, dispatched_at: T(720),  arrived_at: null,     cleared_at: null },
-    { id: IDS.d3, incident_id: IDS.i_on_scene,   unit_id: IDS.u_ems1,    dispatched_at: T(2200), arrived_at: T(1800),  cleared_at: null },
+    { id: IDS.d1, incident_id: IDS.i_dispatched, unit_id: IDS.u_fire1,  dispatched_at: T(750),  arrived_at: null,     cleared_at: null },
+    { id: IDS.d2, incident_id: IDS.i_dispatched, unit_id: IDS.u_garda2, dispatched_at: T(720),  arrived_at: null,     cleared_at: null },
+    { id: IDS.d3, incident_id: IDS.i_on_scene,   unit_id: IDS.u_amb1,   dispatched_at: T(2200), arrived_at: T(1800),  cleared_at: null },
   ];
 
   for (const d of dispatches) {
@@ -381,9 +423,9 @@ async function seedIncidentUnits(): Promise<void> {
     id: string; incident_id: string; unit_id: string; unit_type: string;
     status: string; dispatched_at: string; arrived_at: string | null;
   }> = [
-    { id: IDS.iu1, incident_id: IDS.i_dispatched, unit_id: IDS.u_fire1,   unit_type: "fire",   status: "dispatched", dispatched_at: T(750),  arrived_at: null },
-    { id: IDS.iu2, incident_id: IDS.i_dispatched, unit_id: IDS.u_police2, unit_type: "police", status: "dispatched", dispatched_at: T(720),  arrived_at: null },
-    { id: IDS.iu3, incident_id: IDS.i_on_scene,   unit_id: IDS.u_ems1,    unit_type: "ems",    status: "on_scene",   dispatched_at: T(2200), arrived_at: T(1800) },
+    { id: IDS.iu1, incident_id: IDS.i_dispatched, unit_id: IDS.u_fire1,  unit_type: "fire",   status: "dispatched", dispatched_at: T(750),  arrived_at: null },
+    { id: IDS.iu2, incident_id: IDS.i_dispatched, unit_id: IDS.u_garda2, unit_type: "police", status: "dispatched", dispatched_at: T(720),  arrived_at: null },
+    { id: IDS.iu3, incident_id: IDS.i_on_scene,   unit_id: IDS.u_amb1,   unit_type: "ems",    status: "on_scene",   dispatched_at: T(2200), arrived_at: T(1800) },
   ];
 
   for (const r of rows) {
@@ -411,7 +453,7 @@ async function seedDispatchActions(): Promise<void> {
       incident_id: IDS.i_dispatched,
       action_type: "accept",
       officer_id: "officer-demo-001",
-      payload: JSON.stringify({ unit_ids: [IDS.u_fire1, IDS.u_police2] }),
+      payload: JSON.stringify({ unit_ids: [IDS.u_fire1, IDS.u_garda2] }),
       created_at: T(750),
     },
     {
@@ -419,7 +461,7 @@ async function seedDispatchActions(): Promise<void> {
       incident_id: IDS.i_on_scene,
       action_type: "accept",
       officer_id: "officer-demo-002",
-      payload: JSON.stringify({ unit_ids: [IDS.u_ems1] }),
+      payload: JSON.stringify({ unit_ids: [IDS.u_amb1] }),
       created_at: T(2200),
     },
     {
@@ -427,7 +469,7 @@ async function seedDispatchActions(): Promise<void> {
       incident_id: IDS.i_completed1,
       action_type: "complete",
       officer_id: "officer-demo-001",
-      payload: JSON.stringify({ officer_notes: "Situation de-escalated. No further action required." }),
+      payload: JSON.stringify({ officer_notes: "Situation de-escalated. Parties separated. No arrests." }),
       created_at: T(3600),
     },
     {
@@ -435,7 +477,7 @@ async function seedDispatchActions(): Promise<void> {
       incident_id: IDS.i_completed2,
       action_type: "save_report",
       officer_id: "officer-demo-002",
-      payload: JSON.stringify({ summary: "Two-vehicle collision cleared. Minor injuries. Tow dispatched." }),
+      payload: JSON.stringify({ summary: "Elderly female patient transported to Mater Hospital. Condition stable." }),
       created_at: T(7200),
     },
   ];
@@ -465,9 +507,9 @@ async function seedDispatchQuestions(): Promise<void> {
       id: IDS.dq1,
       incident_id: IDS.i_dispatched,
       officer_id: "officer-demo-001",
-      question: "How many floors are involved?",
-      refined_question: "Can you tell how many floors of the building have smoke?",
-      answer: "Caller says smoke only visible from 3rd floor windows so far.",
+      question: "Which floors are affected by smoke?",
+      refined_question: "Can you see smoke coming from any floors other than the second floor?",
+      answer: "Caller confirms smoke visible only from second-floor windows so far.",
       asked_at: T(700),
       answered_at: T(680),
     },
@@ -475,9 +517,9 @@ async function seedDispatchQuestions(): Promise<void> {
       id: IDS.dq2,
       incident_id: IDS.i_on_scene,
       officer_id: "officer-demo-002",
-      question: "Is the patient alert?",
-      refined_question: "Is the person awake and responding to you?",
-      answer: "Caller confirmed patient is conscious and responding but disoriented.",
+      question: "Is the patient alert and responsive?",
+      refined_question: "Is the woman awake and able to speak to you?",
+      answer: "Caller confirmed patient is conscious, responsive, and able to describe her pain.",
       asked_at: T(2100),
       answered_at: T(2060),
     },
@@ -498,46 +540,6 @@ async function seedDispatchQuestions(): Promise<void> {
 // Main
 // ---------------------------------------------------------------------------
 
-async function runMigrations(): Promise<void> {
-  console.log("[seed] Ensuring schema is up to date...");
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      version TEXT PRIMARY KEY,
-      applied_at TEXT NOT NULL
-    )
-  `);
-  const applied = new Set(
-    (await db.execute("SELECT version FROM schema_migrations")).rows.map(
-      (r) => r["version"] as string
-    )
-  );
-  for (const file of MIGRATION_FILES) {
-    const version = file.replace(".sql", "");
-    if (applied.has(version)) continue;
-    const sql = await readFile(join(MIGRATIONS_DIR, file), "utf-8");
-    await db.executeMultiple(sql);
-    await db.execute({
-      sql: "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-      args: [version, new Date().toISOString()],
-    });
-    console.log(`  [migrate] Applied: ${version}`);
-  }
-}
-
-async function clearData(): Promise<void> {
-  console.log("[seed] Clearing existing data...");
-  // Delete in reverse FK dependency order
-  await db.execute("DELETE FROM dispatch_questions");
-  await db.execute("DELETE FROM dispatch_actions");
-  await db.execute("DELETE FROM incident_units");
-  await db.execute("DELETE FROM dispatches");
-  await db.execute("DELETE FROM transcription_turns");
-  // Nullify unit FK before deleting incidents
-  await db.execute("UPDATE units SET current_incident_id = NULL");
-  await db.execute("DELETE FROM incidents");
-  await db.execute("DELETE FROM units");
-}
-
 async function main(): Promise<void> {
   console.log(`[seed] Connecting to: ${LIBSQL_URL}`);
 
@@ -553,7 +555,7 @@ async function main(): Promise<void> {
     await seedDispatchActions();
     await seedDispatchQuestions();
 
-    console.log("[seed] Done. Database seeded with demo data.");
+    console.log("[seed] Done. Database seeded with Dublin demo data.");
   } catch (err) {
     console.error("[seed] ERROR:", err instanceof Error ? err.message : String(err));
     process.exit(1);

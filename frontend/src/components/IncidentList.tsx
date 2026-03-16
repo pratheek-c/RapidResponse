@@ -12,7 +12,7 @@ type Props = {
 
 export function IncidentList({ incidents, onSelect, selectedId }: Props) {
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<FilterTab>("all");
+  const [filter, setFilter] = useState<FilterTab>("active");
 
   const filtered = useMemo(() => {
     let list = incidents;

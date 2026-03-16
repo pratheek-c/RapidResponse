@@ -1,8 +1,7 @@
 /**
  * Database seed script.
  *
- * Populates libSQL with sample units, incidents and transcriptions
- * for development and demo purposes.
+ * Populates libSQL with sample Dublin emergency units, incidents and transcriptions.
  *
  * Usage: bun run seed
  *
@@ -61,26 +60,37 @@ type UnitSeed = {
   type: "fire" | "ems" | "police" | "hazmat" | "rescue";
 };
 
+// Dublin Fire Brigade (FD), National Ambulance Service (AMB),
+// Garda Síochána (GD), HAZMAT and Coast Guard/Rescue
 const SEED_UNITS: UnitSeed[] = [
-  { unit_code: "EMS-1", type: "ems" },
-  { unit_code: "EMS-2", type: "ems" },
-  { unit_code: "EMS-3", type: "ems" },
-  { unit_code: "FD-1", type: "fire" },
-  { unit_code: "FD-2", type: "fire" },
-  { unit_code: "FD-3", type: "fire" },
-  { unit_code: "PD-1", type: "police" },
-  { unit_code: "PD-2", type: "police" },
-  { unit_code: "PD-3", type: "police" },
-  { unit_code: "PD-4", type: "police" },
-  { unit_code: "HZ-1", type: "hazmat" },
+  { unit_code: "AMB-1", type: "ems" },
+  { unit_code: "AMB-2", type: "ems" },
+  { unit_code: "AMB-3", type: "ems" },
+  { unit_code: "AMB-4", type: "ems" },
+  { unit_code: "FD-1",  type: "fire" },
+  { unit_code: "FD-2",  type: "fire" },
+  { unit_code: "FD-3",  type: "fire" },
+  { unit_code: "FD-4",  type: "fire" },
+  { unit_code: "GD-1",  type: "police" },
+  { unit_code: "GD-2",  type: "police" },
+  { unit_code: "GD-3",  type: "police" },
+  { unit_code: "GD-4",  type: "police" },
+  { unit_code: "HZ-1",  type: "hazmat" },
   { unit_code: "SAR-1", type: "rescue" },
 ];
 
 async function seedUnits(db: Awaited<ReturnType<typeof getDb>>) {
   console.log("Seeding units...");
 
-  // Delete existing seed units
-  await db.execute("DELETE FROM units WHERE unit_code LIKE 'EMS-%' OR unit_code LIKE 'FD-%' OR unit_code LIKE 'PD-%' OR unit_code LIKE 'HZ-%' OR unit_code LIKE 'SAR-%'");
+  // Clear in FK-safe order before re-inserting
+  await db.execute("DELETE FROM dispatch_questions");
+  await db.execute("DELETE FROM dispatch_actions");
+  await db.execute("DELETE FROM incident_units");
+  await db.execute("DELETE FROM dispatches");
+  await db.execute("DELETE FROM transcription_turns");
+  await db.execute("UPDATE units SET current_incident_id = NULL");
+  await db.execute("DELETE FROM incidents");
+  await db.execute("DELETE FROM units");
 
   const now = new Date().toISOString();
 
@@ -100,6 +110,7 @@ async function seedUnits(db: Awaited<ReturnType<typeof getDb>>) {
 type IncidentSeed = {
   caller_id: string;
   caller_location: string;
+  caller_address: string;
   status: "active" | "dispatched" | "resolved";
   type: "fire" | "medical" | "police" | "traffic" | "hazmat" | "search_rescue" | "other" | null;
   priority: "P1" | "P2" | "P3" | "P4" | null;
@@ -108,32 +119,36 @@ type IncidentSeed = {
 
 const SEED_INCIDENTS: IncidentSeed[] = [
   {
-    caller_id: "tel:+15551234001",
-    caller_location: "123 Oak Street, Springfield",
+    caller_id: "tel:+353861234001",
+    caller_location: "53.3461,-6.2560",
+    caller_address: "Tara Street, Dublin 2",
     status: "resolved",
     type: "fire",
     priority: "P1",
-    summary: "Structure fire at residential address. Two fire units dispatched. Fire extinguished. No injuries.",
+    summary: "Structure fire at flat above chipper on Tara Street. Two fire units dispatched. Fire extinguished. No injuries reported.",
   },
   {
-    caller_id: "tel:+15551234002",
-    caller_location: "456 Elm Avenue, Springfield",
+    caller_id: "tel:+353861234002",
+    caller_location: "53.3498,-6.2603",
+    caller_address: "O'Connell Street, Dublin 1",
     status: "dispatched",
     type: "medical",
     priority: "P1",
-    summary: "Caller reported elderly male unconscious. EMS-1 dispatched.",
+    summary: "Caller reported elderly male collapsed outside the GPO. AMB-1 dispatched.",
   },
   {
-    caller_id: "tel:+15551234003",
-    caller_location: "Springfield Highway 101, Mile Marker 23",
+    caller_id: "tel:+353861234003",
+    caller_location: "53.3588,-6.2857",
+    caller_address: "North Circular Road, Dublin 7",
     status: "dispatched",
     type: "traffic",
     priority: "P2",
-    summary: "Multi-vehicle collision. Two injuries reported. EMS and Police dispatched.",
+    summary: "Two-vehicle collision at junction of NCR and Phibsborough Road. Two injuries. AMB and Garda dispatched.",
   },
   {
-    caller_id: "tel:+15551234004",
-    caller_location: "789 Main Street, Springfield",
+    caller_id: "tel:+353861234004",
+    caller_location: "53.3382,-6.2591",
+    caller_address: "St. Stephen's Green, Dublin 2",
     status: "active",
     type: null,
     priority: null,
@@ -154,13 +169,14 @@ async function seedIncidents(db: Awaited<ReturnType<typeof getDb>>) {
 
     await db.execute({
       sql: `INSERT INTO incidents
-              (id, caller_id, caller_location, status, type, priority, summary,
+              (id, caller_id, caller_location, caller_address, status, type, priority, summary,
                created_at, updated_at, resolved_at, s3_audio_prefix, s3_transcript_key)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
       args: [
         id,
         incident.caller_id,
         incident.caller_location,
+        incident.caller_address,
         incident.status,
         incident.type,
         incident.priority,
@@ -171,18 +187,18 @@ async function seedIncidents(db: Awaited<ReturnType<typeof getDb>>) {
       ],
     });
 
-    console.log(`  + ${id} [${incident.status}] ${incident.type ?? "unclassified"}`);
+    console.log(`  + ${id} [${incident.status}] ${incident.type ?? "unclassified"} — ${incident.caller_address}`);
   }
 
-  // Add some transcription turns for the first incident
+  // Add transcription turns for the first (resolved) incident
   const firstId = ids[0];
   if (firstId) {
     const turns = [
-      { role: "agent", text: "911, what is your emergency?", ms: 0 },
-      { role: "caller", text: "There's a fire at my house, 123 Oak Street!", ms: 2000 },
-      { role: "agent", text: "I'm dispatching fire services now. Are you and everyone else out of the building?", ms: 4500 },
-      { role: "caller", text: "Yes we're outside, but my neighbor might still be inside!", ms: 7000 },
-      { role: "agent", text: "Stay clear of the building. Fire units are on their way. Do not go back inside.", ms: 9000 },
+      { role: "agent",  text: "112, what's your emergency?", ms: 0 },
+      { role: "caller", text: "There's a fire — smoke everywhere, it's coming from the flat above the chipper on Tara Street!", ms: 2200 },
+      { role: "agent",  text: "Okay, I'm dispatching fire units now. Is anyone still inside the building?", ms: 4800 },
+      { role: "caller", text: "I don't know, my neighbour might be upstairs. She's elderly.", ms: 7100 },
+      { role: "agent",  text: "Stay back from the building. Fire Brigade are on their way. Do not go back inside.", ms: 9300 },
     ];
 
     for (const turn of turns) {
@@ -199,8 +215,8 @@ async function seedIncidents(db: Awaited<ReturnType<typeof getDb>>) {
 }
 
 async function main() {
-  console.log("RapidResponse.ai — Database Seed");
-  console.log("==================================");
+  console.log("RapidResponse.ai — Database Seed (Dublin)");
+  console.log("==========================================");
 
   const db = await getDb();
 

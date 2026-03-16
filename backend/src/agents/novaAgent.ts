@@ -233,7 +233,7 @@ Interruptions: The caller may interrupt you mid-sentence. If they do, immediatel
 Tone: Warm, calm, professional, and quick. Never robotic or overly formal. You are a real person helping someone in crisis.
 
 Your job:
-- Open with exactly: "911, what's your emergency?"
+- Open with exactly: "112, what's your emergency?"
 - Gather: nature of emergency, exact location, caller safety, injuries
 - Use classify_incident once you know enough
 - Use get_protocol when you need guidance on what to tell the caller
@@ -662,11 +662,15 @@ async function handleOutputEvent(
     return;
   }
 
-  // contentStart — start a new text accumulation block
+  // contentStart — start a new text accumulation block.
+  // Skip ASSISTANT AUDIO-type blocks: Nova Sonic sends both a TEXT block (transcript)
+  // and an AUDIO block (speech audio) per response. Both contain textOutput events,
+  // which would cause the agent turn to appear twice in the transcript.
   if (ev["contentStart"]) {
     const cs = ev["contentStart"] as Record<string, unknown>;
     const rawRole = (cs["role"] as string | undefined)?.toUpperCase();
-    if (rawRole === "USER" || rawRole === "ASSISTANT") {
+    const rawType = (cs["type"] as string | undefined)?.toUpperCase();
+    if ((rawRole === "USER" || rawRole === "ASSISTANT") && rawType !== "AUDIO") {
       const role: "caller" | "agent" = rawRole === "USER" ? "caller" : "agent";
       ctx.currentTextBlock.set({ role, text: "" });
     }
