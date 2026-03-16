@@ -28,6 +28,7 @@ import { env } from "../config/env.ts";
 import { searchProtocols } from "../services/ragService.ts";
 import { classifyIncident, flagCovertDistress } from "../services/incidentService.ts";
 import { dispatchUnit } from "../services/dispatchService.ts";
+import { pushSSE } from "../services/sseService.ts";
 import type {
   IncidentType,
   IncidentPriority,
@@ -871,6 +872,7 @@ async function executeTool(
         const type = input["type"] as IncidentType;
         const priority = input["priority"] as IncidentPriority;
         const result = await classifyIncident(incident_id, type, priority);
+        pushSSE({ type: "transcript_annotation", data: { incident_id, icon: "📊", label: "Incident classified", color: "blue" } });
         return { success: true, data: { classified: true, type, priority, incident: result } };
       }
 
@@ -901,6 +903,7 @@ async function executeTool(
         const trigger = (input["trigger"] as string) ?? "other";
         const confidence = (input["confidence"] as "high" | "medium") ?? "medium";
         await flagCovertDistress(incident_id, trigger, confidence);
+        pushSSE({ type: "transcript_annotation", data: { incident_id, icon: "🤫", label: "Covert distress detected", color: "red" } });
         return {
           success: true,
           data: {

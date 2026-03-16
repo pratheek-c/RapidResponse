@@ -79,6 +79,7 @@ export async function handleDispatch(req: Request): Promise<Response> {
         : [];
       const message = buildDispatchMessage(depts);
       injectTextIntoSession(input.incident_id, message).catch(() => { /* non-fatal */ });
+      pushSSE({ type: "transcript_annotation", data: { incident_id: input.incident_id, icon: "🚔", label: "Units dispatched", color: "cyan" } });
       return json({ ok: true, data: result }, 201);
     } catch (err) { return jsonError(err, 500); }
   }
@@ -113,6 +114,9 @@ export async function handleDispatch(req: Request): Promise<Response> {
       });
 
       console.log(`[dispatch] Saved questionRecord ${questionRecord.id}. Starting async background task.`);
+
+      // Emit annotation so live transcript shows the question was asked
+      pushSSE({ type: "transcript_annotation", data: { incident_id: input.incident_id, icon: "📎", label: "Dispatcher asked a question", color: "yellow" } });
 
       // Respond to frontend immediately — button unsticks, question appears in list.
       // Refining + injecting into Nova happens in background (non-blocking).

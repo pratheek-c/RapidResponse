@@ -219,7 +219,7 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
   const [backupOpen, setBackupOpen] = useState(false);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const { lastEvent } = useSSE();
+  const { lastEvent, getAnnotations } = useSSE();
   const { session } = useSession();
 
   const isUnitOfficer = session?.role === "unit_officer";
@@ -498,7 +498,7 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
                 Refresh
               </button>
             </div>
-            <LiveTranscript lines={transcript} />
+            <LiveTranscript lines={transcript} annotations={getAnnotations(incident.id)} />
           </div>
 
           {/* Dispatch Q&A */}

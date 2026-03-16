@@ -322,6 +322,10 @@ async function handleCallStart(
                         type: "answer_update",
                         data: { incident_id, question: q.question, answer },
                       });
+                      pushSSE({
+                        type: "transcript_annotation",
+                        data: { incident_id, icon: "✅", label: "Caller answered question", color: "green" },
+                      });
                     } else {
                       console.log(`[callHandler] QA "${q.question}" still unanswered.`);
                     }

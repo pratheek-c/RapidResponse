@@ -469,7 +469,8 @@ export type DashboardSSEEvent =
   | { type: "covert_distress";       data: { incident_id: string; trigger: string; confidence: "high" | "medium"; silent_approach: boolean } }
   | { type: "backup_requested";      data: { incident_id: string; requesting_unit: string; requested_types: Department[]; urgency: "routine" | "urgent" | "emergency"; message: string; target_units: string[] } }
   | { type: "backup_accepted";       data: { incident_id: string; responding_unit: string; responding_unit_type: Department } }
-  | { type: "unit_status_change";    data: { unit_id: string; status: UnitStatus; assigned_incident: string | null } };
+  | { type: "unit_status_change";    data: { unit_id: string; status: UnitStatus; assigned_incident: string | null } }
+  | { type: "transcript_annotation"; data: { incident_id: string; icon: string; label: string; color: string } };
 
 // ---------------------------------------------------------------------------
 // Role-based dispatch — new types (009)

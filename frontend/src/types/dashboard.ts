@@ -206,6 +206,23 @@ export type SseUnitStatusChangeEvent = {
   };
 };
 
+export type TranscriptAnnotation = {
+  icon: string;
+  label: string;
+  color: string;
+  timestamp: string; // ISO string, set client-side when received
+};
+
+export type SseTranscriptAnnotationEvent = {
+  type: "transcript_annotation";
+  data: {
+    incident_id: string;
+    icon: string;
+    label: string;
+    color: string;
+  };
+};
+
 export type SSEEvent =
   | SseIncidentClassifiedEvent
   | SseTranscriptUpdateEvent
@@ -218,7 +235,8 @@ export type SSEEvent =
   | SseCovertDistressEvent
   | SseBackupRequestedEvent
   | SseBackupAcceptedEvent
-  | SseUnitStatusChangeEvent;
+  | SseUnitStatusChangeEvent
+  | SseTranscriptAnnotationEvent;
 
 export type ApiSuccess<T> = { ok: true; data: T };
 export type ApiError = { ok: false; error: string };

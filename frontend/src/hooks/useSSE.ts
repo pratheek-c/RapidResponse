@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { TranscriptAnnotation } from "@/types/dashboard";
 
 type DashboardEventType =
   | "incident_created"
@@ -13,7 +14,8 @@ type DashboardEventType =
   | "covert_distress"
   | "backup_requested"
   | "backup_accepted"
-  | "unit_status_change";
+  | "unit_status_change"
+  | "transcript_annotation";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -36,11 +38,13 @@ const EVENT_TYPES: DashboardEventType[] = [
   "backup_requested",
   "backup_accepted",
   "unit_status_change",
+  "transcript_annotation",
 ];
 
 export function useSSE() {
   const [connected, setConnected] = useState(false);
   const [lastEvent, setLastEvent] = useState<SseEnvelope | null>(null);
+  const [annotations, setAnnotations] = useState<Map<string, TranscriptAnnotation[]>>(new Map());
 
   useEffect(() => {
     const source = new EventSource(`${API_BASE}/events`);
@@ -52,7 +56,24 @@ export function useSSE() {
       const handler = (event: MessageEvent<string>) => {
         try {
           const parsed = JSON.parse(event.data) as unknown;
-          setLastEvent({ type: eventType, data: parsed });
+
+          if (eventType === "transcript_annotation") {
+            const data = parsed as { incident_id: string; icon: string; label: string; color: string };
+            const annotation: TranscriptAnnotation = {
+              icon: data.icon,
+              label: data.label,
+              color: data.color,
+              timestamp: new Date().toISOString(),
+            };
+            setAnnotations((prev) => {
+              const next = new Map(prev);
+              const existing = next.get(data.incident_id) ?? [];
+              next.set(data.incident_id, [...existing, annotation]);
+              return next;
+            });
+          } else {
+            setLastEvent({ type: eventType, data: parsed });
+          }
         } catch {
           // ignore malformed event
         }
@@ -70,5 +91,13 @@ export function useSSE() {
     };
   }, []);
 
-  return useMemo(() => ({ connected, lastEvent }), [connected, lastEvent]);
+  const getAnnotations = useCallback(
+    (incident_id: string): TranscriptAnnotation[] => annotations.get(incident_id) ?? [],
+    [annotations]
+  );
+
+  return useMemo(
+    () => ({ connected, lastEvent, getAnnotations }),
+    [connected, lastEvent, getAnnotations]
+  );
 }
