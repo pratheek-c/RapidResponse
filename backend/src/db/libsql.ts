@@ -619,3 +619,68 @@ function rowToDispatchQuestion(row: Record<string, unknown>): DispatchQuestion {
     answered_at: (row["answered_at"] as string) ?? null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Backup requests
+// ---------------------------------------------------------------------------
+
+export async function dbCreateBackupRequest(
+  db: Client,
+  input: {
+    incident_id: string;
+    requesting_unit: string;
+    requested_types: string[];
+    urgency: "routine" | "urgent" | "emergency";
+    message?: string;
+    alerted_units: string[];
+  }
+): Promise<{ id: string }> {
+  const id = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO backup_requests
+          (id, incident_id, requesting_unit, requested_types, urgency, message, alerted_units, responded_units)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      id,
+      input.incident_id,
+      input.requesting_unit,
+      JSON.stringify(input.requested_types),
+      input.urgency,
+      input.message ?? null,
+      JSON.stringify(input.alerted_units),
+      JSON.stringify([]),
+    ],
+  });
+  return { id };
+}
+
+export async function dbAddBackupResponder(
+  db: Client,
+  backupRequestId: string,
+  respondingUnit: string
+): Promise<void> {
+  const row = await db.execute({
+    sql: "SELECT responded_units FROM backup_requests WHERE id = ?",
+    args: [backupRequestId],
+  });
+  const existing: string[] = row.rows[0]
+    ? JSON.parse((row.rows[0].responded_units as string) ?? "[]")
+    : [];
+  if (!existing.includes(respondingUnit)) existing.push(respondingUnit);
+  await db.execute({
+    sql: "UPDATE backup_requests SET responded_units = ? WHERE id = ?",
+    args: [JSON.stringify(existing), backupRequestId],
+  });
+}
+
+export async function dbGetOpenBackupRequestForIncident(
+  db: Client,
+  incidentId: string
+): Promise<{ id: string } | null> {
+  const row = await db.execute({
+    sql: "SELECT id FROM backup_requests WHERE incident_id = ? ORDER BY created_at DESC LIMIT 1",
+    args: [incidentId],
+  });
+  if (!row.rows[0]) return null;
+  return { id: row.rows[0].id as string };
+}

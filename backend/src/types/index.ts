@@ -466,4 +466,46 @@ export type DashboardSSEEvent =
   | { type: "status_change";         data: { incident_id: string; status: IncidentStatus; unit_id?: string } }
   | { type: "escalation_suggestion"; data: { incident_id: string; reason: string; suggested_units: Department[] } }
   | { type: "incident_completed";    data: { incident_id: string; summary: string } }
-  | { type: "covert_distress";       data: { incident_id: string; trigger: string; confidence: "high" | "medium"; silent_approach: boolean } };
+  | { type: "covert_distress";       data: { incident_id: string; trigger: string; confidence: "high" | "medium"; silent_approach: boolean } }
+  | { type: "backup_requested";      data: { incident_id: string; requesting_unit: string; requested_types: Department[]; urgency: "routine" | "urgent" | "emergency"; message: string; target_units: string[] } }
+  | { type: "backup_accepted";       data: { incident_id: string; responding_unit: string; responding_unit_type: Department } }
+  | { type: "unit_status_change";    data: { unit_id: string; status: UnitStatus; assigned_incident: string | null } };
+
+// ---------------------------------------------------------------------------
+// Role-based dispatch — new types (009)
+// ---------------------------------------------------------------------------
+
+export type UserRole = "dispatcher" | "unit_officer";
+
+export type TakeRequest = {
+  incident_id: string;
+  unit_id: string;
+  role: UserRole;           // Must be 'unit_officer'
+};
+
+export type BackupRequestBody = {
+  incident_id: string;
+  requesting_unit: string;
+  requested_types: Department[];
+  urgency: "routine" | "urgent" | "emergency";
+  message?: string;
+  role: UserRole;           // Must be 'unit_officer'
+};
+
+export type BackupRespondBody = {
+  incident_id: string;
+  responding_unit: string;
+  role: UserRole;           // Must be 'unit_officer'
+};
+
+export type BackupRequest = {
+  id: string;
+  incident_id: string;
+  requesting_unit: string;
+  requested_types: string;  // JSON array
+  urgency: "routine" | "urgent" | "emergency";
+  message: string | null;
+  alerted_units: string | null;  // JSON array
+  responded_units: string | null; // JSON array
+  created_at: string;
+};

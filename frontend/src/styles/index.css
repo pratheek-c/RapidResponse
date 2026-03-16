@@ -23,3 +23,8 @@ body,
 body {
   background: radial-gradient(circle at top, #172554 0%, #0a0f1e 52%);
 }
+
+/* Force standard leaflet containers below portals */
+.leaflet-container {
+  z-index: 10 !important;
+}

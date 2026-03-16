@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { X } from "lucide-react";
+import { createPortal } from "react-dom";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -80,9 +81,10 @@ export function BackupModal({ incidentId, requestingUnit, onClose }: BackupModal
     }
   }
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+      className="fixed inset-0 flex items-center justify-center bg-black/70 px-4"
+      style={{ zIndex: 9999 }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="backup-modal-title"
@@ -196,6 +198,7 @@ export function BackupModal({ incidentId, requestingUnit, onClose }: BackupModal
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

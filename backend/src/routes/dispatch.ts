@@ -15,12 +15,10 @@
  */
 
 import {
-  dbCreateDispatch,
   dbGetDispatchesForIncident,
   dbCreateDispatchAction,
   dbCreateDispatchQuestion,
   dbUpdateDispatchQuestion,
-  dbGetDispatchQuestions,
   getDb,
 } from "../db/libsql.ts";
 import {
@@ -30,7 +28,6 @@ import {
   acceptIncident,
   escalateIncident,
   buildDispatchMessage,
-  departmentToUnitType,
 } from "../services/dispatchService.ts";
 import { pushSSE } from "../services/sseService.ts";
 import { injectTextIntoSession } from "../agents/novaAgent.ts";
@@ -244,6 +241,193 @@ export async function handleDispatch(req: Request): Promise<Response> {
       });
 
       return json({ ok: true, data: { incident_id: input.incident_id, summary: closeSummary, updated_at: updated?.updated_at } });
+    } catch (err) { return jsonError(err, 500); }
+  }
+
+  // POST /dispatch/take  (Unit Officer self-assigns to an unassigned incident)
+  if (req.method === "POST" && parts[0] === "take") {
+    let body: unknown;
+    try { body = await req.json(); } catch { return badRequest("Invalid JSON body"); }
+    const input = body as import("../types/index.ts").TakeRequest;
+    if (!input.incident_id || !input.unit_id) {
+      return badRequest("incident_id and unit_id are required");
+    }
+    // Role check — permissive: read from body for now
+    if (input.role && input.role !== "unit_officer") {
+      return json({ ok: false, error: "Only unit officers can take incidents" }, 403);
+    }
+    try {
+      const db = getDb();
+      const { dbGetUnit } = await import("../db/libsql.ts");
+      const unit = await dbGetUnit(db, input.unit_id);
+      if (!unit) return badRequest("Unit not found");
+      if (unit.status !== "available" && unit.status !== ("on_duty" as string)) {
+        return json({ ok: false, error: "Unit is not available" }, 409);
+      }
+
+      const incident = await getIncident(input.incident_id);
+      if (!incident) return badRequest("Incident not found");
+      const currentUnits: string[] = incident.assigned_units
+        ? JSON.parse(incident.assigned_units)
+        : [];
+      if (currentUnits.length > 0) {
+        return json({ ok: false, error: "Incident already has assigned units" }, 409);
+      }
+
+      const now = new Date().toISOString();
+      const newUnits = [input.unit_id];
+
+      await updateIncident(input.incident_id, {
+        status: "dispatched",
+        accepted_at: now,
+        assigned_units: JSON.stringify(newUnits),
+      });
+
+      // Update unit status
+      await db.execute({
+        sql: "UPDATE units SET status = ?, current_incident_id = ?, updated_at = ? WHERE id = ?",
+        args: ["dispatched", input.incident_id, now, input.unit_id],
+      });
+
+      // Insert incident_units record
+      await db.execute({
+        sql: "INSERT INTO incident_units (id, incident_id, unit_id, unit_type, status, dispatched_at) VALUES (?, ?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), input.incident_id, input.unit_id, unit.type, "dispatched", now],
+      });
+
+      // Build dispatch message and inject into Sonic (non-fatal)
+      const dept = unit.type === "police" ? "patrol"
+        : unit.type === "ems" ? "medical"
+        : unit.type as "fire" | "hazmat";
+      const message = buildDispatchMessage([dept]);
+      injectTextIntoSession(input.incident_id, message).catch(() => { /* non-fatal */ });
+
+      pushSSE({ type: "unit_dispatched", data: { incident_id: input.incident_id, unit_id: input.unit_id, unit_type: dept } });
+      pushSSE({ type: "status_change", data: { incident_id: input.incident_id, status: "dispatched", unit_id: input.unit_id } });
+
+      return json({ ok: true, data: { status: "dispatched", dispatch_message: message } }, 201);
+    } catch (err) { return jsonError(err, 500); }
+  }
+
+  // POST /dispatch/backup-request  (Unit Officer requests backup from nearby units)
+  if (req.method === "POST" && parts[0] === "backup-request") {
+    let body: unknown;
+    try { body = await req.json(); } catch { return badRequest("Invalid JSON body"); }
+    const input = body as import("../types/index.ts").BackupRequestBody;
+    if (!input.incident_id || !input.requesting_unit || !Array.isArray(input.requested_types) || !input.urgency) {
+      return badRequest("incident_id, requesting_unit, requested_types, and urgency are required");
+    }
+    if (input.role && input.role !== "unit_officer") {
+      return json({ ok: false, error: "Only unit officers can request backup" }, 403);
+    }
+    try {
+      const db = getDb();
+      const { dbCreateBackupRequest } = await import("../db/libsql.ts");
+
+      // Find on-duty units to alert — alert all available units not on this incident
+      const unitsResult = await db.execute({
+        sql: `SELECT id, unit_code, type FROM units WHERE status = 'available' AND id != ? LIMIT 20`,
+        args: [input.requesting_unit],
+      });
+      const alertedUnits = unitsResult.rows.map((r) => r.id as string);
+
+      await dbCreateBackupRequest(db, {
+        incident_id: input.incident_id,
+        requesting_unit: input.requesting_unit,
+        requested_types: input.requested_types,
+        urgency: input.urgency,
+        ...(input.message !== undefined ? { message: input.message } : {}),
+        alerted_units: alertedUnits,
+      });
+
+      await dbCreateDispatchAction(db, {
+        incident_id: input.incident_id,
+        action_type: "escalate", // re-use closest existing type for audit
+        officer_id: input.requesting_unit,
+        payload: { backup_request: true, urgency: input.urgency, requested_types: input.requested_types },
+      });
+
+      pushSSE({
+        type: "backup_requested",
+        data: {
+          incident_id: input.incident_id,
+          requesting_unit: input.requesting_unit,
+          requested_types: input.requested_types,
+          urgency: input.urgency,
+          message: input.message ?? "",
+          target_units: alertedUnits,
+        },
+      } as any);
+
+      return json({ ok: true, data: { status: "alert_sent", alerted_units: alertedUnits } }, 201);
+    } catch (err) { return jsonError(err, 500); }
+  }
+
+  // POST /dispatch/backup-respond  (Another unit responds to a backup request)
+  if (req.method === "POST" && parts[0] === "backup-respond") {
+    let body: unknown;
+    try { body = await req.json(); } catch { return badRequest("Invalid JSON body"); }
+    const input = body as import("../types/index.ts").BackupRespondBody;
+    if (!input.incident_id || !input.responding_unit) {
+      return badRequest("incident_id and responding_unit are required");
+    }
+    if (input.role && input.role !== "unit_officer") {
+      return json({ ok: false, error: "Only unit officers can respond to backup requests" }, 403);
+    }
+    try {
+      const db = getDb();
+      const { dbGetUnit, dbGetOpenBackupRequestForIncident, dbAddBackupResponder } = await import("../db/libsql.ts");
+
+      const unit = await dbGetUnit(db, input.responding_unit);
+      if (!unit) return badRequest("Unit not found");
+
+      const now = new Date().toISOString();
+
+      // Add unit to incident_units as secondary responder
+      await db.execute({
+        sql: "INSERT OR IGNORE INTO incident_units (id, incident_id, unit_id, unit_type, status, dispatched_at) VALUES (?, ?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), input.incident_id, input.responding_unit, unit.type, "dispatched", now],
+      });
+
+      // Update unit status
+      await db.execute({
+        sql: "UPDATE units SET status = ?, current_incident_id = ?, updated_at = ? WHERE id = ?",
+        args: ["dispatched", input.incident_id, now, input.responding_unit],
+      });
+
+      // Update assigned_units on incident
+      const incident = await getIncident(input.incident_id);
+      if (incident) {
+        const existing: string[] = incident.assigned_units ? JSON.parse(incident.assigned_units) : [];
+        if (!existing.includes(input.responding_unit)) existing.push(input.responding_unit);
+        await updateIncident(input.incident_id, { assigned_units: JSON.stringify(existing) });
+      }
+
+      // Log in backup_requests
+      const backupReq = await dbGetOpenBackupRequestForIncident(db, input.incident_id);
+      if (backupReq) {
+        await dbAddBackupResponder(db, backupReq.id, input.responding_unit);
+      }
+
+      const dept = unit.type === "police" ? "patrol"
+        : unit.type === "ems" ? "medical"
+        : unit.type as "fire" | "hazmat";
+
+      pushSSE({
+        type: "backup_accepted",
+        data: {
+          incident_id: input.incident_id,
+          responding_unit: input.responding_unit,
+          responding_unit_type: dept,
+        },
+      } as any);
+
+      pushSSE({ type: "status_change", data: { incident_id: input.incident_id, status: "dispatched", unit_id: input.responding_unit } });
+
+      // Inject Sonic message (non-fatal)
+      injectTextIntoSession(input.incident_id, "Additional units are en route to your location.").catch(() => {});
+
+      return json({ ok: true, data: { status: "responding", incident_id: input.incident_id } }, 201);
     } catch (err) { return jsonError(err, 500); }
   }
 

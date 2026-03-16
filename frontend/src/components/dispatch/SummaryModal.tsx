@@ -25,7 +25,7 @@ export function SummaryModal({ open, initialSummary, onSave, onClose }: SummaryM
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/70 p-4">
+    <div className="fixed inset-0 flex items-center justify-center bg-slate-950/70 p-4" style={{ zIndex: 9999 }}>
       <div className="w-full max-w-2xl rounded-lg border border-slate-700 bg-command-panel p-4 shadow-glow">
         <h2 className="text-lg font-semibold text-slate-100">Finalize Incident Summary</h2>
         <textarea
