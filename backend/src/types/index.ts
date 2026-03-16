@@ -47,6 +47,7 @@ export type Incident = {
   accepted_at: string | null;
   completed_at: string | null;
   escalated: number; // 0 or 1
+  covert_distress: number; // 0 or 1
   officer_id: string | null;
   assigned_units: string | null; // JSON array of unit_ids
 };
@@ -69,6 +70,7 @@ export type UpdateIncidentInput = {
   accepted_at?: string;
   completed_at?: string;
   escalated?: number;
+  covert_distress?: number;
   officer_id?: string;
   assigned_units?: string; // JSON array string
 };
@@ -151,7 +153,8 @@ export type ProtocolSearchResult = ProtocolChunk & {
 export type NovaToolName =
   | "classify_incident"
   | "get_protocol"
-  | "dispatch_unit";
+  | "dispatch_unit"
+  | "flag_covert_distress";
 
 export type ClassifyIncidentInput = {
   type: IncidentType;
@@ -462,4 +465,5 @@ export type DashboardSSEEvent =
   | { type: "unit_dispatched";       data: { incident_id: string; unit_id: string; unit_type: Department } }
   | { type: "status_change";         data: { incident_id: string; status: IncidentStatus; unit_id?: string } }
   | { type: "escalation_suggestion"; data: { incident_id: string; reason: string; suggested_units: Department[] } }
-  | { type: "incident_completed";    data: { incident_id: string; summary: string } };
+  | { type: "incident_completed";    data: { incident_id: string; summary: string } }
+  | { type: "covert_distress";       data: { incident_id: string; trigger: string; confidence: "high" | "medium"; silent_approach: boolean } };

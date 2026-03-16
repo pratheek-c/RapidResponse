@@ -32,10 +32,11 @@ function priorityToSeverity(priority: DashboardIncident["priority"]): Severity {
   return 2;
 }
 
-function normalizeIncident(input: DashboardIncident): DashboardIncident {
+function normalizeIncident(input: DashboardIncident & { covert_distress?: number | boolean }): DashboardIncident {
   const coords = parseCoords(input.caller_location);
   return {
     ...input,
+    covert_distress: Boolean(input.covert_distress),
     severity: input.severity ?? priorityToSeverity(input.priority),
     urgency: input.urgency ?? (input.priority === "P1" ? "critical" : "high"),
     summary_line: input.summary_line ?? input.summary ?? "Live incident in progress",
@@ -204,6 +205,18 @@ export function useIncidents() {
     if (lastEvent.type === "escalation_suggestion") {
       const escalationEvent = { type: "escalation_suggestion", data: lastEvent.data } as SseEscalationSuggestionEvent;
       setEscalations((prev) => ({ ...prev, [escalationEvent.data.incident_id]: escalationEvent.data }));
+      return;
+    }
+
+    if (lastEvent.type === "covert_distress") {
+      const evData = lastEvent.data as { incident_id: string };
+      setIncidents((prev) =>
+        prev.map((inc) =>
+          inc.id === evData.incident_id
+            ? { ...inc, covert_distress: true }
+            : inc
+        )
+      );
     }
   }, [lastEvent]);
 

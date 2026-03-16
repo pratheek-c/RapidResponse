@@ -111,7 +111,9 @@ Rephrase the dispatcher's question as a single, short, conversational sentence t
 Remove jargon. Be direct. Return ONLY the rephrased question — no explanation, no quotes around it.`;
 
   try {
+    console.log(`[bridge:refine] Calling Nova Lite for refineQuestion...`);
     const refined = (await invokeLite(prompt, 128)).trim();
+    console.log(`[bridge:refine] Nova Lite returned: "${refined}"`);
     // Guard: if Nova Lite returns something clearly wrong (empty / very long), fall back
     if (refined.length > 0 && refined.length < 300) return refined;
     return question;
@@ -133,27 +135,28 @@ export async function extractAnswer(
   question: string,
   transcript: TranscriptEntry[]
 ): Promise<string | null> {
-  const callerLines = transcript
-    .filter((t) => t.role === "caller")
-    .slice(-20)
-    .map((t) => `CALLER: ${t.text}`)
+  const recentLines = transcript
+    .slice(-14)
+    .map((t) => `${t.role === "caller" ? "CALLER" : "AGENT"}: ${t.text}`)
     .join("\n");
 
-  if (!callerLines.trim()) return null;
+  if (!recentLines.trim()) return null;
 
   const prompt = `You are extracting information from a 911 call transcript.
 
-Question asked: "${question}"
+Question asked by dispatcher: "${question}"
 
-Caller transcript lines (most recent 20):
-${callerLines}
+Recent transcript lines:
+${recentLines}
 
 Has the caller answered this question? If yes, summarise their answer in one short sentence (max 150 chars).
 If the caller has NOT answered yet, reply with the single word: UNANSWERED
 Return ONLY the answer sentence OR the word UNANSWERED.`;
 
   try {
+    console.log(`[bridge:extract] Calling Nova Lite to extract answer to "${question}"...`);
     const raw = (await invokeLite(prompt, 128)).trim();
+    console.log(`[bridge:extract] Nova Lite returned: "${raw}"`);
     if (raw.toUpperCase() === "UNANSWERED" || raw.length === 0) return null;
     return raw.slice(0, 200);
   } catch (err) {

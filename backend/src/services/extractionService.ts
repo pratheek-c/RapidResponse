@@ -37,6 +37,9 @@ export type ExtractionResult = {
   injuries_described: string | null;
   hazards_mentioned: string[];
   key_location_details: string | null;
+  covert_distress_detected: boolean;
+  covert_distress_trigger: string | null;
+  yes_no_mode_active: boolean;
   extracted_at: string; // ISO 8601
 };
 
@@ -173,7 +176,10 @@ Return a JSON object with these exact keys (use null or [] if unknown):
   "victim_count": number | null,
   "injuries_described": string | null,
   "hazards_mentioned": string[],
-  "key_location_details": string | null
+  "key_location_details": string | null,
+  "covert_distress_detected": boolean (true if caller seems unable to speak freely),
+  "covert_distress_trigger": string or null ("pizza_order", "whispering", "one_word_answers", etc.),
+  "yes_no_mode_active": boolean (true if caller is answering only in yes/no)
 }`;
 
   let result: ExtractionResult = {
@@ -186,6 +192,9 @@ Return a JSON object with these exact keys (use null or [] if unknown):
     injuries_described: null,
     hazards_mentioned: [],
     key_location_details: null,
+    covert_distress_detected: false,
+    covert_distress_trigger: null,
+    yes_no_mode_active: false,
     extracted_at: new Date().toISOString(),
   };
 
@@ -227,6 +236,9 @@ Return a JSON object with these exact keys (use null or [] if unknown):
         injuries_described: extracted.injuries_described ?? null,
         hazards_mentioned: Array.isArray(extracted.hazards_mentioned) ? extracted.hazards_mentioned : [],
         key_location_details: extracted.key_location_details ?? null,
+        covert_distress_detected: extracted.covert_distress_detected === true,
+        covert_distress_trigger: typeof extracted.covert_distress_trigger === "string" ? extracted.covert_distress_trigger : null,
+        yes_no_mode_active: extracted.yes_no_mode_active === true,
         extracted_at: new Date().toISOString(),
       };
     }

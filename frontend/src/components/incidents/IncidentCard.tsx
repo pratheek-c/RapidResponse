@@ -97,6 +97,11 @@ export function IncidentCard({ incident, selected, onSelect }: IncidentCardProps
             Escalated
           </span>
         )}
+        {incident.covert_distress && (
+          <span className="rounded border border-violet-700/60 bg-violet-900/30 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-violet-300">
+            Covert
+          </span>
+        )}
       </div>
 
       {/* Row 3: summary */}

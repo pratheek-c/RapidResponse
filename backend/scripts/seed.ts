@@ -41,6 +41,7 @@ async function getDb() {
     "005_fix_units_fk.sql",
     "006_fix_transcription_dispatches_fk.sql",
     "007_add_cad_number.sql",
+    "008_add_covert_distress.sql",
   ]) {
     const version = file.replace(".sql", "");
     if (applied.has(version)) continue;

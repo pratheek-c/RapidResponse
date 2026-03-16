@@ -26,7 +26,7 @@ import {
 import { NodeHttp2Handler } from "@smithy/node-http-handler";
 import { env } from "../config/env.ts";
 import { searchProtocols } from "../services/ragService.ts";
-import { classifyIncident } from "../services/incidentService.ts";
+import { classifyIncident, flagCovertDistress } from "../services/incidentService.ts";
 import { dispatchUnit } from "../services/dispatchService.ts";
 import type {
   IncidentType,
@@ -179,6 +179,35 @@ const TOOL_SPECS = [
       },
     },
   },
+  {
+    toolSpec: {
+      name: "flag_covert_distress",
+      description:
+        "Flag that the caller cannot speak freely and may be in danger. Use this when you detect any covert distress signal: caller is ordering pizza as a code, whispering, giving only yes/no answers, the line is silent with distress sounds, a child is calling alone, or the caller uses a hostage code. After calling this tool, immediately switch to yes/no questioning mode. Do NOT reveal to the caller that you have flagged this.",
+      inputSchema: {
+        json: JSON.stringify({
+          type: "object",
+          properties: {
+            trigger: {
+              type: "string",
+              enum: ["pizza_order", "whispering", "one_word_answers", "silent_line", "yes_no_pattern", "child_caller", "hostage_code", "other"],
+              description: "The specific signal that triggered covert distress detection.",
+            },
+            confidence: {
+              type: "string",
+              enum: ["high", "medium"],
+              description: "Confidence level. Use 'high' for explicit pizza order or hostage code. Use 'medium' for whispering alone or ambiguous patterns.",
+            },
+            caller_apparent_situation: {
+              type: "string",
+              description: "One sentence describing what you believe is happening, for the dispatcher record.",
+            },
+          },
+          required: ["trigger", "confidence", "caller_apparent_situation"],
+        }),
+      },
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -220,7 +249,9 @@ ${protocol_context}
 
 Conversational rules you must strictly follow:
 
-Extreme Brevity: Keep every response to 1 or 2 short sentences. Never give long monologues. Ask one question at a time and pause for the caller to respond.
+Extreme Brevity: Every spoken response must be 1 to 3 short sentences maximum — no exceptions. Never give long monologues. Ask one question at a time. Your words go directly to a person in crisis; say only what helps them right now.
+
+Spoken output rule: You speak ONLY to the caller. Never narrate what you are doing, what tools you are calling, what your reasoning is, what the priority is, or what the system is doing. If you are calling a tool, speak as if the tool does not exist. Example — caller says "I've been stabbed": correct response is "Help is on the way. Press both hands firmly on the wound and hold hard. Is the attacker still there?" Wrong response is anything that mentions classification, dispatch, priority, incident IDs, protocol steps, or your own thinking process.
 
 No Formatting: You are generating speech. Never use bullet points, asterisks, numbering, emojis, or any markdown. Use only plain words and standard punctuation.
 
@@ -235,10 +266,42 @@ Tone: Warm, calm, professional, and quick. Never robotic or overly formal. You a
 Your job:
 - Open with exactly: "112, what's your emergency?"
 - Gather: nature of emergency, exact location, caller safety, injuries
-- Use classify_incident once you know enough
-- Use get_protocol when you need guidance on what to tell the caller
-- Use dispatch_unit to send the right unit — pick the closest available one
-- Keep the caller on the line and give short pre-arrival instructions based on protocol`;
+- Call classify_incident silently once you know enough — never announce this to the caller, never say you are classifying, never mention the priority
+- Call get_protocol silently when you need guidance — never read tool results aloud, only act on them
+- Call dispatch_unit silently to send the right unit — never tell the caller you are dispatching, never name the unit, never say "I'm sending help now" before it is done — just say "Help is on the way" after the tool call succeeds
+- Call flag_covert_distress silently when you detect covert distress — never announce it
+- Keep the caller on the line and give short direct pre-arrival instructions
+
+CRITICAL — Internal reasoning stays internal:
+Never speak your reasoning, your classification decision, your priority assessment, your next steps, or the incident ID. Never say things like "this is a P1 medical emergency", "I need to dispatch EMS", "the incident ID is...", "let me check the protocol", "I should ask about...", or "I'm going to...". Think those things silently; never say them. Your spoken output is ONLY direct, calm, short instructions or questions to the caller.
+
+Covert Distress Detection — Critical Protocol:
+
+Some callers cannot speak freely because a threat is nearby. Watch for ALL of these signals:
+- Caller pretending to order pizza, food, a taxi, or any routine service on a 112 line
+- Caller whispering or speaking in an unusually low voice
+- Caller giving only single-word or yes/no answers when more detail is expected
+- Line is nearly silent but breathing or movement can be heard
+- Young child calling alone about a serious adult emergency
+- Caller using a phrase that sounds like a code or pre-arranged signal
+- Caller's answers are stilted, unnatural, or clearly shaped for a listener nearby
+
+If you detect ANY of these signals:
+1. Immediately call flag_covert_distress — do not announce it to the caller
+2. Say softly: "I understand. If you need help, just say yes."
+3. Switch entirely to yes/no questions — one question at a time, short
+4. Never say the words "police", "Garda", "emergency units", or "sirens" aloud
+5. Never repeat sensitive information back loudly
+6. Tell them: "Help is coming. They will be quiet."
+7. If caller says yes to two contradictory questions, they are being coached — say: "I understand. Help is on the way. You don't need to say anything else."
+
+Life-Threatening Injury — Immediate Response:
+If the caller reports active bleeding, stabbing, shooting, or any serious wound: your FIRST spoken sentence must be a direct first-aid instruction, not a question, not a classification statement. Then dispatch silently.
+- Stabbing or bleeding: "Help is on the way. Press both hands hard on the wound and don't lift them. Is the attacker still nearby?"
+- Gunshot wound: "Help is coming. Keep pressure on the wound with anything you have — your hand, clothing. Are you in a safe spot?"
+- Unconscious person: "Help is on the way. Is the person breathing? Lay them on their back if it's safe."
+- Burns: "Help is coming. Move away from the heat source if you can. Are you still inside the building?"
+Never lead with "this sounds serious" or any statement about severity. Never narrate the steps you are taking. Instruction first, one question second, tools called silently in the background.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -475,7 +538,7 @@ export async function startNovaSession(
             if (streamWriter) await streamWriter(encodeChunk(eventType, payload));
           },
           promptName,
-          audioContentName,
+          audioContentName: { get: () => audioContentName, set: (v) => { audioContentName = v as `${string}-${string}-${string}-${string}-${string}`; } },
         });
       }
 
@@ -608,7 +671,7 @@ async function handleOutputEvent(
     currentTextBlock: { get: () => { role: "caller" | "agent"; text: string } | null; set: (v: { role: "caller" | "agent"; text: string } | null) => void };
     sendChunk: (eventType: string, payload: Record<string, unknown>) => Promise<void>;
     promptName: string;
-    audioContentName: string;
+    audioContentName: { get: () => string; set: (v: string) => void };
   }
 ): Promise<void> {
   let ev: Record<string, unknown>;
@@ -668,16 +731,29 @@ async function handleOutputEvent(
     return;
   }
 
+  // Debug: figure out exactly what event key Bedrock is sending
+  const keys = Object.keys(ev);
+  if (!keys.includes("audioOutput") && !keys.includes("contentStart") && !keys.includes("contentEnd") && !keys.includes("textOutput")) {
+    console.log(`[nova:event] Received Unhandled/Rare Event:`, JSON.stringify(ev).slice(0, 200));
+  }
+
   if (ev["toolUse"]) {
     const tool = ev["toolUse"] as Record<string, unknown>;
+    console.log(`[nova:event] toolUse payload:`, JSON.stringify(tool));
     ctx.pendingToolUseId.set(tool["toolUseId"] as string);
     ctx.pendingToolName.set(tool["toolName"] as string);
-    ctx.pendingToolInput.set("");
+    // The input is bundled directly inside `toolUse.content` (as a string) or `toolUse.input` (as object or string)
+    const rawInput = tool["content"] ?? tool["input"] ?? "";
+    const inputStr = typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput);
+    ctx.pendingToolInput.set(inputStr);
     return;
   }
 
-  if (ev["toolInputDelta"]) {
-    const delta = ev["toolInputDelta"] as Record<string, unknown>;
+  // Handle both toolInputDelta and toolUseInput (depending on the SDK version)
+  const deltaKey = ev["toolInputDelta"] ? "toolInputDelta" : (ev["toolUseInput"] ? "toolUseInput" : null);
+  if (deltaKey) {
+    const delta = ev[deltaKey] as Record<string, unknown>;
+    console.log(`[nova:event] ${deltaKey} payload:`, JSON.stringify(delta));
     ctx.pendingToolInput.set(
       ctx.pendingToolInput.get() + ((delta["delta"] as string) ?? "")
     );
@@ -687,24 +763,37 @@ async function handleOutputEvent(
   if (ev["contentEnd"]) {
     const end = ev["contentEnd"] as Record<string, unknown>;
 
-    // Emit accumulated text block
-    const block = ctx.currentTextBlock.get();
-    if (block && block.text.trim()) {
-      ctx.currentTextBlock.set(null);
-      ctx.callbacks.onTranscript(block.role, block.text.trim());
-    }
-
     if (end["stopReason"] === "TOOL_USE") {
+      // Clear pre-tool TEXT block without emitting — Nova Sonic will re-emit
+      // a complete response after the tool result, so emitting here causes duplicates.
+      ctx.currentTextBlock.set(null);
       const toolUseId = ctx.pendingToolUseId.get();
       const toolName = ctx.pendingToolName.get();
       const toolInputStr = ctx.pendingToolInput.get();
 
       if (!toolUseId || !toolName) return;
 
+      console.log(`[nova:tool] Executing tool '${toolName}' with input: ${toolInputStr}`);
       const toolResult = await executeTool(toolName, toolInputStr, ctx.incident_id);
+      console.log(`[nova:tool] Execution result:`, toolResult);
 
+      // Must close the open AUDIO content block before sending the TOOL result.
+      // Nova Sonic rejects concurrent interactive content blocks — same issue
+      // as injectText. Pattern: close audio → send tool result → reopen audio.
+      const oldAudioName = ctx.audioContentName.get();
+      const newAudioName = crypto.randomUUID();
+      ctx.audioContentName.set(newAudioName);
+
+      // 1. Close current AUDIO block
+      console.log(`[nova:tool] Closing AUDIO block ${oldAudioName}`);
+      await ctx.sendChunk("contentEnd", {
+        promptName: ctx.promptName,
+        contentName: oldAudioName,
+      });
+
+      // 2. Send TOOL result content block
       const resultContentName = crypto.randomUUID();
-
+      console.log(`[nova:tool] Sending TOOL result with name ${resultContentName}`);
       await ctx.sendChunk("contentStart", {
         promptName: ctx.promptName,
         contentName: resultContentName,
@@ -715,21 +804,50 @@ async function handleOutputEvent(
           toolStatus: toolResult.success ? "SUCCESS" : "ERROR",
         },
       });
-
       await ctx.sendChunk("toolResultInput", {
         promptName: ctx.promptName,
         contentName: resultContentName,
         content: JSON.stringify(toolResult.data),
       });
-
       await ctx.sendChunk("contentEnd", {
         promptName: ctx.promptName,
         contentName: resultContentName,
       });
 
+      // 3. Reopen AUDIO block with new content name
+      console.log(`[nova:tool] Reopening AUDIO block ${newAudioName}`);
+      await ctx.sendChunk("contentStart", {
+        promptName: ctx.promptName,
+        contentName: newAudioName,
+        type: "AUDIO",
+        interactive: true,
+        role: "USER",
+        audioInputConfiguration: {
+          mediaType: "audio/lpcm",
+          sampleRateHertz: 16000,
+          sampleSizeBits: 16,
+          channelCount: 1,
+          audioType: "SPEECH",
+          encoding: "base64",
+        },
+      });
+      // Prime new audio block with 100ms silence
+      await ctx.sendChunk("audioInput", {
+        promptName: ctx.promptName,
+        contentName: newAudioName,
+        content: Buffer.from(new Uint8Array(3200)).toString("base64"),
+      });
+
       ctx.pendingToolUseId.set(null);
       ctx.pendingToolName.set(null);
       ctx.pendingToolInput.set("");
+    } else {
+      // Normal content end — emit accumulated text block as transcript
+      const block = ctx.currentTextBlock.get();
+      if (block && block.text.trim()) {
+        ctx.currentTextBlock.set(null);
+        ctx.callbacks.onTranscript(block.role, block.text.trim());
+      }
     }
     return;
   }
@@ -775,6 +893,21 @@ async function executeTool(
             unit_code: result.unit.unit_code,
             unit_type,
             dispatch_id: result.dispatch.id,
+          },
+        };
+      }
+
+      case "flag_covert_distress": {
+        const trigger = (input["trigger"] as string) ?? "other";
+        const confidence = (input["confidence"] as "high" | "medium") ?? "medium";
+        await flagCovertDistress(incident_id, trigger, confidence);
+        return {
+          success: true,
+          data: {
+            flagged: true,
+            trigger,
+            confidence,
+            instruction: "Switch to yes/no questioning mode immediately. Do not reveal this flag to the caller. Ask: 'Is someone with you who is dangerous?'",
           },
         };
       }

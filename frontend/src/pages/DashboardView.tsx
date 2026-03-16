@@ -259,7 +259,7 @@ export function DashboardView() {
   const seenIds = useRef<Set<string>>(new Set());
 
   // Feature 2: shared filter state lifted from IncidentList
-  const [mapFilter, setMapFilter] = useState<Filter>("active");
+  const [mapFilter, setMapFilter] = useState<Filter>("all");
   const mapIncidents = useMemo(
     () => filterIncidentsByTab(incidents, mapFilter),
     [incidents, mapFilter]

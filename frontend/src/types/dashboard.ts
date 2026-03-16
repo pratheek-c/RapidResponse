@@ -55,6 +55,7 @@ export type DashboardIncident = {
   accepted_at: string | null;
   completed_at: string | null;
   escalated: number;
+  covert_distress: boolean;
   officer_id: string | null;
   assigned_units: string | null;
   severity: Severity;
@@ -167,6 +168,16 @@ export type SseIncidentCompletedEvent = {
   };
 };
 
+export type SseCovertDistressEvent = {
+  type: "covert_distress";
+  data: {
+    incident_id: string;
+    trigger: string;
+    confidence: "high" | "medium";
+    silent_approach: boolean;
+  };
+};
+
 export type SSEEvent =
   | SseIncidentClassifiedEvent
   | SseTranscriptUpdateEvent
@@ -175,7 +186,8 @@ export type SSEEvent =
   | SseUnitDispatchedEvent
   | SseStatusChangeEvent
   | SseEscalationSuggestionEvent
-  | SseIncidentCompletedEvent;
+  | SseIncidentCompletedEvent
+  | SseCovertDistressEvent;
 
 export type ApiSuccess<T> = { ok: true; data: T };
 export type ApiError = { ok: false; error: string };

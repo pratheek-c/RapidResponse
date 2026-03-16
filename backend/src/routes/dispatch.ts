@@ -95,6 +95,7 @@ export async function handleDispatch(req: Request): Promise<Response> {
       return badRequest("incident_id and question are required");
     }
     try {
+      console.log(`[dispatch] POST /question received for incident ${input.incident_id}: "${input.question}"`);
       const db = getDb();
 
       // Log action
@@ -105,37 +106,52 @@ export async function handleDispatch(req: Request): Promise<Response> {
         payload: { question: input.question },
       });
 
-      // Refine the question for natural speech
-      const refined = await refineQuestion(input.question, []);
-
-      // Store question record
+      // Save question to DB immediately so it appears in the UI right away.
+      // Use the raw question as refined_question initially — background task will update it.
       const questionRecord = await dbCreateDispatchQuestion(db, {
         incident_id: input.incident_id,
         officer_id: input.officer_id,
         question: input.question,
-        refined_question: refined,
+        refined_question: input.question,
       });
 
-      // Inject into active Nova Sonic session
-      const injected = await injectTextIntoSession(input.incident_id, `Dispatcher question for caller: ${refined}`);
+      console.log(`[dispatch] Saved questionRecord ${questionRecord.id}. Starting async background task.`);
 
-      // If call is no longer active, try to find answer in existing transcript
-      if (!injected) {
-        const { dbGetTranscription } = await import("../db/libsql.ts");
-        const turns = await dbGetTranscription(db, input.incident_id);
-        const simplified = turns.map((t) => ({ role: t.role, text: t.text }));
-        const answer = await extractAnswer(input.question, simplified);
-        if (answer) {
-          await dbUpdateDispatchQuestion(db, questionRecord.id, answer);
-          pushSSE({
-            type: "answer_update",
-            data: { incident_id: input.incident_id, question: input.question, answer },
-          });
-          return json({ ok: true, data: { ...questionRecord, answer, injected: false } });
+      // Respond to frontend immediately — button unsticks, question appears in list.
+      // Refining + injecting into Nova happens in background (non-blocking).
+      void (async () => {
+        try {
+          console.log(`[dispatch:bg] Refining question via Nova Lite...`);
+          const refined = await refineQuestion(input.question, []);
+          console.log(`[dispatch:bg] Refined as: "${refined}"`);
+
+          // Inject into active Nova Sonic session
+          console.log(`[dispatch:bg] Injecting into Nova Sonic session (caller audio stream)...`);
+          const injected = await injectTextIntoSession(input.incident_id, `Dispatcher question for caller: ${refined}`);
+          console.log(`[dispatch:bg] Injection successful? ${injected}`);
+
+          // If call is no longer active, try to find answer in existing transcript
+          if (!injected) {
+            console.log(`[dispatch:bg] Call not active. Running fallback extractAnswer on existing transcript.`);
+            const { dbGetTranscription } = await import("../db/libsql.ts");
+            const turns = await dbGetTranscription(db, input.incident_id);
+            const simplified = turns.map((t) => ({ role: t.role, text: t.text }));
+            const answer = await extractAnswer(input.question, simplified);
+            if (answer) {
+              console.log(`[dispatch:bg] Fallback found answer: "${answer}"`);
+              await dbUpdateDispatchQuestion(db, questionRecord.id, answer);
+              pushSSE({
+                type: "answer_update",
+                data: { incident_id: input.incident_id, question: input.question, answer },
+              });
+            }
+          }
+        } catch (err) {
+          console.error("[dispatch/question] background refine/inject failed:", err instanceof Error ? err.message : String(err));
         }
-      }
+      })();
 
-      return json({ ok: true, data: { ...questionRecord, injected } });
+      return json({ ok: true, data: questionRecord });
     } catch (err) { return jsonError(err, 500); }
   }
 

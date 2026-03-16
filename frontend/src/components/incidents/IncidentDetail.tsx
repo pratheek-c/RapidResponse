@@ -9,6 +9,7 @@ import {
   Skull,
   ShieldX,
   ActivitySquare,
+  EyeOff,
 } from "lucide-react";
 import type {
   ApiResponse,
@@ -305,11 +306,31 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
   }
 
   async function handleAsk(question: string) {
-    await fetch(`${API_BASE}/dispatch/question`, {
+    // Optimistic update — show question immediately before the network round-trip
+    const optimisticEntry: QAEntry = {
+      id: crypto.randomUUID(),
+      incident_id: incident.id,
+      question,
+      refined_question: null,
+      answer: null,
+      asked_at: new Date().toISOString(),
+      answered_at: null,
+      officer_id: officerId,
+    };
+    setQaEntries((prev) => [...prev, optimisticEntry]);
+
+    const res = await fetch(`${API_BASE}/dispatch/question`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ incident_id: incident.id, question, officer_id: officerId }),
     });
+    if (!res.ok) {
+      // Remove the optimistic entry on failure
+      setQaEntries((prev) => prev.filter((e) => e.id !== optimisticEntry.id));
+      setActionError(`Question failed to send — please retry. (${res.status})`);
+      return;
+    }
+    // Sync with server to get the real ID assigned by DB
     await loadQuestions();
   }
 
@@ -399,6 +420,21 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
 
       {/* Scrollable body */}
       <div className="flex-1 space-y-3 overflow-y-auto p-3">
+
+        {/* Covert distress banner — shown when AI has flagged silent approach required */}
+        {incident.covert_distress && (
+          <div className="rounded-lg border border-violet-700/60 bg-violet-950/40 px-3 py-2.5">
+            <div className="mb-1 flex items-center gap-2">
+              <EyeOff className="h-3.5 w-3.5 text-violet-300" />
+              <p className="text-[10px] font-bold uppercase tracking-widest text-violet-300">
+                Silent Approach Required
+              </p>
+            </div>
+            <p className="text-xs text-violet-200">
+              Caller cannot speak freely. AI has switched to yes/no mode. Dispatch units with NO SIRENS. Do not announce approach on radio.
+            </p>
+          </div>
+        )}
 
         {/* AI Report — always shown, auto-generated */}
         <AIReportCard incident={incident} />

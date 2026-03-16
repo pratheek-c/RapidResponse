@@ -39,6 +39,8 @@ import type { MockUnitWithDistance } from "../routes/units.ts";
 import { maybeExtract, cancelExtraction, getExtraction } from "../services/extractionService.ts";
 import { evaluateEscalation } from "../agents/triageAgent.ts";
 import { pushSSE } from "../services/sseService.ts";
+import { extractAnswer } from "../agents/dispatchBridgeAgent.ts";
+import { dbGetDispatchQuestions, dbUpdateDispatchQuestion, getDb } from "../db/libsql.ts";
 
 // ---------------------------------------------------------------------------
 // Per-connection state
@@ -294,6 +296,40 @@ async function handleCallStart(
                   },
                 });
               }
+            }
+
+            // After each caller turn, try to extract answers to any pending dispatch Q&A
+            if (role === "caller") {
+              void (async () => {
+                try {
+                  const db = getDb();
+                  const questions = await dbGetDispatchQuestions(db, incident_id);
+                  const unanswered = questions.filter((q) => q.answer === null);
+                  console.log(`[callHandler] Caller turn finished. Pending dispatch Q&A count: ${unanswered.length}`);
+                  if (unanswered.length === 0) return;
+
+                  const simplifiedTranscript = state.current
+                    ? state.current.transcript.map((t) => ({ role: t.role as "caller" | "agent", text: t.text }))
+                    : [];
+
+                  for (const q of unanswered) {
+                    console.log(`[callHandler] Checking if transcript answers QA: "${q.question}"`);
+                    const answer = await extractAnswer(q.question, simplifiedTranscript);
+                    if (answer) {
+                      console.log(`[callHandler] Found answer! "${answer}". Broadcasting SSE answer_update.`);
+                      await dbUpdateDispatchQuestion(db, q.id, answer);
+                      pushSSE({
+                        type: "answer_update",
+                        data: { incident_id, question: q.question, answer },
+                      });
+                    } else {
+                      console.log(`[callHandler] QA "${q.question}" still unanswered.`);
+                    }
+                  }
+                } catch (err) {
+                  console.error("[qa] answer extraction failed:", err instanceof Error ? err.message : String(err));
+                }
+              })();
             }
           }
         },

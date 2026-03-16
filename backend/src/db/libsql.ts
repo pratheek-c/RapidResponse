@@ -181,6 +181,10 @@ export async function dbUpdateIncident(
     fields.push("escalated = :escalated");
     args["escalated"] = input.escalated;
   }
+  if (input.covert_distress !== undefined) {
+    fields.push("covert_distress = :covert_distress");
+    args["covert_distress"] = input.covert_distress;
+  }
   if (input.officer_id !== undefined) {
     fields.push("officer_id = :officer_id");
     args["officer_id"] = input.officer_id;
@@ -384,6 +388,7 @@ function rowToIncident(row: Record<string, unknown>): Incident {
     accepted_at: (row["accepted_at"] as string) ?? null,
     completed_at: (row["completed_at"] as string) ?? null,
     escalated: (row["escalated"] as number) ?? 0,
+    covert_distress: Number(row["covert_distress"] ?? 0),
     officer_id: (row["officer_id"] as string) ?? null,
     assigned_units: (row["assigned_units"] as string) ?? null,
   };

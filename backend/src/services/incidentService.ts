@@ -125,6 +125,28 @@ export async function classifyIncident(
 }
 
 // ---------------------------------------------------------------------------
+// Covert Distress Flag (triggered by Nova Sonic tool call)
+// ---------------------------------------------------------------------------
+
+export async function flagCovertDistress(
+  incident_id: string,
+  trigger: string,
+  confidence: "high" | "medium"
+): Promise<void> {
+  const db = getDb();
+  try {
+    await dbUpdateIncident(db, incident_id, { covert_distress: 1 });
+    pushSSE({
+      type: "covert_distress",
+      data: { incident_id, trigger, confidence, silent_approach: true },
+    });
+  } catch (err) {
+    console.error("[covert_distress] flag failed:", err);
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Resolve / close
 // ---------------------------------------------------------------------------
 
