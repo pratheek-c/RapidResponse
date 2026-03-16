@@ -30,13 +30,6 @@ build/
 
 # OpenCode tool config
 opencode.json
-.opencode/prompts/
-.opencode/skills/
-
-# Claude agent memory and config (AI tool internals — not project docs)
-.claude/
-backend/.claude/
-frontend/.claude/
 
 # Internal planning and sprint spec files (not public documentation)
 FEATURES.md
