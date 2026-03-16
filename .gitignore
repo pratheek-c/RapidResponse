@@ -27,3 +27,14 @@ build/
 .idea/
 *.swp
 *.swo
+
+# OpenCode tool config
+opencode.json
+.opencode/prompts/
+
+# Playwright test config and artifacts
+playwright.config.ts
+seed.spec.ts
+specs/
+tests/
+test-results/
