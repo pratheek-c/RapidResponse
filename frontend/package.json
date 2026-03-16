@@ -10,6 +10,8 @@
   "dependencies": {
     "@tailwindcss/postcss": "^4.2.1",
     "autoprefixer": "^10.4.27",
+    "esri-leaflet": "^3.0.19",
+    "esri-leaflet-vector": "^4.3.2",
     "firebase": "^12.10.0",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.577.0",

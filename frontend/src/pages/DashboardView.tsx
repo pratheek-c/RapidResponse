@@ -189,7 +189,7 @@ export function DashboardView() {
   const officerId = user?.uid ?? "dispatcher-local";
 
   return (
-    <main className="flex min-h-screen flex-col bg-command-bg text-command-text">
+    <main className="flex h-screen flex-col bg-command-bg text-command-text">
       <Header
         connected={connected}
         department={department}
@@ -201,7 +201,7 @@ export function DashboardView() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* Left: incident list */}
-        <div className="hidden w-[300px] shrink-0 lg:block">
+        <div className="hidden w-[300px] shrink-0 overflow-y-auto lg:block">
           <IncidentList
             incidents={incidents}
             selectedId={selectedId}
@@ -210,8 +210,8 @@ export function DashboardView() {
         </div>
 
         {/* Centre: map */}
-        <section className="flex flex-1 flex-col gap-3 p-3">
-          <div className="flex-1">
+        <section className="flex min-h-0 flex-1 flex-col p-3">
+          <div className="min-h-0 flex-1">
             <CommandMap
               incidents={incidents}
               units={units}
@@ -222,7 +222,7 @@ export function DashboardView() {
         </section>
 
         {/* Right: incident detail / dispatch controls */}
-        <aside className="w-full shrink-0 border-l border-slate-800 bg-command-panel md:w-[420px]">
+        <aside className="w-full shrink-0 overflow-y-auto border-l border-slate-800 bg-command-panel md:w-[420px]">
           {selectedIncident ? (
             <IncidentDetail
               incident={selectedIncident}

@@ -13,7 +13,7 @@ const DEPARTMENTS: { id: Department; label: string; description: string }[] = [
 ];
 
 export function LoginPage() {
-    const { isAuthenticated, department, setDepartment, signInWithGoogle, signInDev, hasFirebaseConfig } =
+    const { isAuthenticated, loading, department, setDepartment, signInWithGoogle, signInDev, hasFirebaseConfig } =
         useAuth();
     const [authError, setAuthError] = useState<string | null>(null);
     const [signingIn, setSigningIn] = useState(false);
