@@ -236,7 +236,7 @@ function EmptyState({ incidents }: { incidents: Incident[] }) {
       }}
     >
       <div style={{ fontSize: 13, color: "#bbb", letterSpacing: 2, fontWeight: 700 }}>
-        SPRINGFIELD EMERGENCY COMMUNICATIONS CENTER
+        DUBLIN EMERGENCY COMMUNICATIONS CENTRE
       </div>
       <div style={{ display: "flex", gap: 32 }}>
         {[
@@ -356,7 +356,7 @@ export function DispatcherDashboard() {
               fontWeight: 600,
             }}
           >
-            DISPATCHER
+            DECC DISPATCHER
           </span>
           {/* Zone chips */}
           {mockData?.zones && (
@@ -412,19 +412,34 @@ export function DispatcherDashboard() {
         <StatsTile label="Active" value={activeCount} />
         <StatsTile label="Dispatched" value={dispatchedCount} />
         <StatsTile label="Resolved" value={resolvedCount} />
-        <StatsTile label="Avail. Units" value={availableUnits} />
+        <StatsTile label="P1 Critical" value={incidents.filter((i) => i.priority === "P1").length} />
+        <StatsTile label="Avail. Units" value={`${availableUnits}/${units.length}`} />
         <div
           style={{
             flex: 1,
             display: "flex",
             alignItems: "center",
+            justifyContent: "flex-end",
             padding: "0 20px",
             fontSize: 11,
             color: "#bbb",
             letterSpacing: 0.5,
+            gap: 16,
           }}
         >
-          Springfield Emergency Communications Center · Day Shift
+          <span style={{ color: "#888" }}>
+            Dublin Emergency Communications Centre · DECC-01
+          </span>
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: connected ? "#16a34a" : "#ef4444",
+              letterSpacing: 0.5,
+            }}
+          >
+            {connected ? "● LIVE" : "● OFFLINE"}
+          </span>
         </div>
       </div>
 

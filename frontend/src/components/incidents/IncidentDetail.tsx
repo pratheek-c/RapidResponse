@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Siren } from "lucide-react";
+import {
+  ArrowLeft,
+  Siren,
+  RefreshCw,
+  MapPin,
+  Flame,
+  AlertTriangle,
+  Skull,
+  ShieldX,
+  ActivitySquare,
+} from "lucide-react";
 import type {
   ApiResponse,
   DashboardIncident,
@@ -29,11 +39,160 @@ type IncidentDetailProps = {
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
+// ---------------------------------------------------------------------------
+// AI Report card — structured, scannable, color-coded
+// ---------------------------------------------------------------------------
+
+const PRIORITY_CONFIG = {
+  P1: {
+    label: "P1 — CRITICAL",
+    border: "border-red-700/60",
+    bg: "bg-red-950/30",
+    text: "text-red-300",
+    dot: "bg-red-500",
+  },
+  P2: {
+    label: "P2 — SERIOUS",
+    border: "border-orange-700/60",
+    bg: "bg-orange-950/20",
+    text: "text-orange-300",
+    dot: "bg-orange-500",
+  },
+  P3: {
+    label: "P3 — MODERATE",
+    border: "border-yellow-700/60",
+    bg: "bg-yellow-950/20",
+    text: "text-yellow-300",
+    dot: "bg-yellow-500",
+  },
+  P4: {
+    label: "P4 — LOW",
+    border: "border-slate-700/60",
+    bg: "bg-slate-900/20",
+    text: "text-slate-400",
+    dot: "bg-slate-500",
+  },
+} as const;
+
+function HazardPill({ active, label, icon }: { active: boolean; label: string; icon: React.ReactNode }) {
+  if (!active) return null;
+  return (
+    <span className="flex items-center gap-1 rounded border border-red-700/50 bg-red-950/40 px-1.5 py-0.5 text-[10px] font-semibold text-red-300">
+      {icon}
+      {label}
+    </span>
+  );
+}
+
+function AIReportCard({ incident }: { incident: DashboardIncident }) {
+  const cfg = PRIORITY_CONFIG[incident.priority ?? "P4"];
+  const ageMs = Date.now() - Date.parse(incident.created_at);
+  const ageMin = Math.floor(ageMs / 60000);
+
+  const activeHazards = [
+    { active: incident.hazards.fire, label: "Fire", icon: <Flame className="h-2.5 w-2.5" /> },
+    { active: incident.hazards.smoke, label: "Smoke", icon: <ActivitySquare className="h-2.5 w-2.5" /> },
+    { active: incident.hazards.chemicals, label: "Chemical", icon: <AlertTriangle className="h-2.5 w-2.5" /> },
+    { active: incident.hazards.weapon, label: "Weapon", icon: <ShieldX className="h-2.5 w-2.5" /> },
+    { active: incident.hazards.collapseRisk, label: "Collapse Risk", icon: <Skull className="h-2.5 w-2.5" /> },
+  ];
+
+  return (
+    <div
+      className={`rounded-lg border p-3 ${cfg.border} ${cfg.bg}`}
+    >
+      {/* Header row */}
+      <div className="mb-2 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className={`h-2 w-2 animate-pulse rounded-full ${cfg.dot}`} />
+          <p className={`text-[10px] font-bold uppercase tracking-widest ${cfg.text}`}>
+            AI Incident Report
+          </p>
+          <span className={`rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase ${cfg.border} ${cfg.text}`}>
+            {cfg.label}
+          </span>
+        </div>
+        <span className="text-[10px] text-slate-500">
+          {ageMin > 0 ? `${ageMin}m ago` : "Just now"}
+        </span>
+      </div>
+
+      {/* Summary */}
+      <p className="mb-2 text-sm font-semibold leading-snug text-slate-100">
+        {incident.summary_line}
+      </p>
+
+      {/* Location */}
+      <div className="mb-2 flex items-start gap-1.5 text-xs text-slate-400">
+        <MapPin className="mt-0.5 h-3 w-3 shrink-0 text-slate-500" />
+        <span>{incident.location.address}</span>
+      </div>
+
+      {/* Grid: casualties + hazards */}
+      <div className="mb-2 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded border border-slate-800 bg-slate-900/60 p-2">
+          <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+            Casualties
+          </p>
+          <p className={`mt-0.5 text-base font-bold ${incident.injuries.count > 0 ? "text-red-300" : "text-slate-400"}`}>
+            {incident.injuries.count}
+          </p>
+          <p className="text-[10px] capitalize text-slate-500">
+            {incident.injuries.severity} severity
+          </p>
+          {incident.injuries.notes && incident.injuries.notes !== "No injuries reported yet" && (
+            <p className="mt-0.5 text-[10px] italic text-slate-400">{incident.injuries.notes}</p>
+          )}
+        </div>
+
+        <div className="rounded border border-slate-800 bg-slate-900/60 p-2">
+          <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+            Urgency
+          </p>
+          <p className={`mt-0.5 text-base font-bold capitalize ${
+            incident.urgency === "critical"
+              ? "text-red-300"
+              : incident.urgency === "high"
+                ? "text-orange-300"
+                : "text-slate-300"
+          }`}>
+            {incident.urgency}
+          </p>
+          <p className="text-[10px] text-slate-500">
+            {incident.status.replace(/_/g, " ")}
+          </p>
+        </div>
+      </div>
+
+      {/* Hazard pills */}
+      {activeHazards.some((h) => h.active) && (
+        <div className="mb-2 flex flex-wrap gap-1">
+          {activeHazards.map((h) => (
+            <HazardPill key={h.label} active={h.active} label={h.label} icon={h.icon} />
+          ))}
+        </div>
+      )}
+
+      {/* Hazard notes */}
+      {incident.hazards.notes && incident.hazards.notes !== "No major hazards reported" && (
+        <p className="text-[10px] italic text-slate-400">
+          {incident.hazards.notes}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 export function IncidentDetail({ incident, units, officerId, onBack }: IncidentDetailProps) {
   const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([]);
   const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
   const [qaEntries, setQaEntries] = useState<QAEntry[]>([]);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
   const { lastEvent } = useSSE();
 
   // Auto-append new transcript lines from SSE
@@ -65,6 +224,15 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
     );
   }, [lastEvent, incident.id]);
 
+  // Load transcript + questions automatically when incident is opened
+  useEffect(() => {
+    void loadTranscript();
+    void loadQuestions();
+    // Reset unit selection when switching incidents
+    setSelectedUnitIds([]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incident.id]);
+
   const assignedDepartments = useMemo<Department[]>(() => {
     return units
       .filter((unit) => selectedUnitIds.includes(unit.id))
@@ -79,21 +247,26 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
   }
 
   async function loadTranscript() {
-    const response = await fetch(`${API_BASE}/incidents/${incident.id}/transcript`);
-    if (!response.ok) return;
-    const payload = (await response.json()) as ApiResponse<
-      Array<{ id: string; incident_id: string; role: "caller" | "agent"; text: string; created_at: string }>
-    >;
-    if (!payload.ok) return;
-    setTranscript(
-      payload.data.map((line) => ({
-        id: line.id,
-        incident_id: line.incident_id,
-        role: line.role,
-        text: line.text,
-        timestamp: line.created_at,
-      }))
-    );
+    setTranscriptLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/incidents/${incident.id}/transcript`);
+      if (!response.ok) return;
+      const payload = (await response.json()) as ApiResponse<
+        Array<{ id: string; incident_id: string; role: "caller" | "agent"; text: string; created_at: string }>
+      >;
+      if (!payload.ok) return;
+      setTranscript(
+        payload.data.map((line) => ({
+          id: line.id,
+          incident_id: line.incident_id,
+          role: line.role,
+          text: line.text,
+          timestamp: line.created_at,
+        }))
+      );
+    } finally {
+      setTranscriptLoading(false);
+    }
   }
 
   async function loadQuestions() {
@@ -132,7 +305,7 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         incident_id: incident.id,
-        reason: "Dispatcher escalation from dashboard",
+        reason: "Dispatcher escalation from DECC dashboard",
         requested_unit_types: requested,
       }),
     });
@@ -155,6 +328,12 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
     });
   }
 
+  const openedAt = new Date(incident.created_at).toLocaleTimeString("en-IE", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+
   return (
     <section className="flex h-full flex-col bg-command-panel">
       <SummaryModal
@@ -164,55 +343,77 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
         onClose={() => setSummaryOpen(false)}
       />
 
-      <div className="flex items-center justify-between border-b border-slate-800 p-3">
+      {/* Detail header */}
+      <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300"
+          title="Back to incident list (Esc)"
+          className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 transition-colors hover:bg-slate-800"
         >
           <ArrowLeft className="h-3 w-3" />
           Back
         </button>
-        <div className="flex items-center gap-2">
+
+        <div className="flex flex-col items-center">
+          <p className="font-mono text-[10px] font-bold text-slate-400">
+            #{incident.id.slice(0, 8).toUpperCase()}
+          </p>
+          <p className="text-[9px] text-slate-600">Opened {openedAt}</p>
+        </div>
+
+        <div className="flex items-center gap-1.5">
           <SeverityBadge severity={incident.severity} />
           <StatusBadge status={incident.status} />
         </div>
       </div>
 
+      {/* Scrollable body */}
       <div className="flex-1 space-y-3 overflow-y-auto p-3">
-        <div className="rounded-lg border border-slate-700 bg-command-card p-3">
-          <p className="text-xs uppercase tracking-[0.15em] text-slate-400">AI Report</p>
-          <p className="mt-1 text-sm font-semibold text-slate-100">{incident.summary_line}</p>
-          <p className="mt-1 text-xs text-slate-400">{incident.location.address}</p>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-300">
-            <p>Injuries: {incident.injuries.count}</p>
-            <p>Fire Risk: {incident.hazards.fire ? "Yes" : "No"}</p>
-            <p>Chemicals: {incident.hazards.chemicals ? "Yes" : "No"}</p>
-            <p>Weapon: {incident.hazards.weapon ? "Yes" : "No"}</p>
-          </div>
-        </div>
 
+        {/* AI Report — always shown, auto-generated */}
+        <AIReportCard incident={incident} />
+
+        {/* Transcript */}
         <div className="rounded-lg border border-slate-700 bg-command-card p-3">
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-xs uppercase tracking-[0.15em] text-slate-400">Live Transcript</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+              Live Transcript
+              {transcript.length > 0 && (
+                <span className="ml-2 rounded-full bg-slate-700 px-1.5 py-0.5 text-slate-300">
+                  {transcript.length}
+                </span>
+              )}
+            </p>
             <button
               type="button"
               onClick={() => void loadTranscript()}
-              className="text-xs text-blue-300 hover:text-blue-200"
+              disabled={transcriptLoading}
+              title="Refresh transcript"
+              className="flex items-center gap-1 text-xs text-blue-400 transition-colors hover:text-blue-300 disabled:opacity-50"
             >
+              <RefreshCw className={`h-3 w-3 ${transcriptLoading ? "animate-spin" : ""}`} />
               Refresh
             </button>
           </div>
           <LiveTranscript lines={transcript} />
         </div>
 
+        {/* Dispatch Q&A */}
         <div className="rounded-lg border border-slate-700 bg-command-card p-3">
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-xs uppercase tracking-[0.15em] text-slate-400">Dispatch Q&A</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+              Dispatch Q&amp;A
+              {qaEntries.length > 0 && (
+                <span className="ml-2 rounded-full bg-slate-700 px-1.5 py-0.5 text-slate-300">
+                  {qaEntries.length}
+                </span>
+              )}
+            </p>
             <button
               type="button"
               onClick={() => void loadQuestions()}
-              className="text-xs text-blue-300 hover:text-blue-200"
+              className="text-xs text-blue-400 transition-colors hover:text-blue-300"
             >
               Refresh
             </button>
@@ -223,17 +424,36 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
           </div>
         </div>
 
+        {/* Unit assignment */}
         <div className="rounded-lg border border-slate-700 bg-command-card p-3">
-          <p className="mb-2 text-xs uppercase tracking-[0.15em] text-slate-400">Assign Units</p>
-          <UnitSelector units={units} selectedUnitIds={selectedUnitIds} onToggle={toggleUnit} />
-          <div className="mt-3">
-            <ActionButtons onAccept={handleAccept} onEscalate={handleEscalate} onComplete={handleComplete} />
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+              Assign Units
+            </p>
+            <div className="flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
+              <Siren className="h-3 w-3 text-amber-300" />
+              {selectedUnitIds.length} selected
+            </div>
           </div>
-          <div className="mt-2 inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-300">
-            <Siren className="h-3 w-3 text-amber-300" />
-            Selected units: {selectedUnitIds.length}
+
+          <UnitSelector
+            units={units}
+            selectedUnitIds={selectedUnitIds}
+            onToggle={toggleUnit}
+            incidentLat={incident.location.lat}
+            incidentLng={incident.location.lng}
+          />
+
+          <div className="mt-3">
+            <ActionButtons
+              onAccept={handleAccept}
+              onEscalate={handleEscalate}
+              onComplete={handleComplete}
+              incidentStatus={incident.status}
+            />
           </div>
         </div>
+
       </div>
     </section>
   );

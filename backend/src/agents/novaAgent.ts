@@ -206,7 +206,7 @@ function buildSystemPrompt(
           .join("\n")}\n[END AVAILABLE UNITS]`
       : "";
 
-  return `You are a highly efficient, empathetic human agent handling a live 911 emergency call for ${env.DISPATCH_DEPT} in ${env.DISPATCH_CITY}. You are speaking to the caller over a real-time audio connection.
+  return `You are a highly efficient, empathetic human agent handling a live 112 emergency call for ${env.DISPATCH_DEPT} in ${env.DISPATCH_CITY}. You are speaking to the caller over a real-time audio connection.
 
 Current call context:
 - Incident ID: ${incident_id}
@@ -373,30 +373,10 @@ export async function startNovaSession(
       contentName: systemContentName,
     });
 
-    // 6. USER text trigger — makes Nova Sonic respond with the opening greeting
-    const triggerContentName = crypto.randomUUID();
-    console.log("[nova:stream] → contentStart TEXT trigger");
-    yield encodeChunk("contentStart", {
-      promptName,
-      contentName: triggerContentName,
-      type: "TEXT",
-      interactive: true,
-      role: "USER",
-      textInputConfiguration: { mediaType: "text/plain" },
-    });
-    console.log("[nova:stream] → textInput trigger '.'");
-    yield encodeChunk("textInput", {
-      promptName,
-      contentName: triggerContentName,
-      content: ".",
-    });
-    console.log("[nova:stream] → contentEnd trigger");
-    yield encodeChunk("contentEnd", {
-      promptName,
-      contentName: triggerContentName,
-    });
-
-    // 7. contentStart (AUDIO)
+    // 6. contentStart (AUDIO)
+    // Note: no separate text trigger — the silence prime below is sufficient to
+    // trigger Nova Sonic's VAD and produce the opening greeting from the system prompt.
+    // A text trigger causes a second response (double greeting).
     console.log("[nova:stream] → contentStart AUDIO");
     yield encodeChunk("contentStart", {
       promptName,

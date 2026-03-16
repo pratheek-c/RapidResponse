@@ -6,10 +6,10 @@ import { DeptIcon } from "@/components/common/DeptIcon";
 import { useAuth } from "@/hooks/useAuth";
 
 const DEPARTMENTS: { id: Department; label: string; description: string }[] = [
-  { id: "patrol", label: "Patrol", description: "Law enforcement & public safety" },
-  { id: "fire", label: "Fire", description: "Fire suppression & rescue" },
-  { id: "medical", label: "Medical", description: "EMS & emergency medical care" },
-  { id: "hazmat", label: "Hazmat", description: "Hazardous materials response" },
+  { id: "patrol", label: "Garda", description: "An Garda Síochána — DMR patrol" },
+  { id: "fire", label: "DFB", description: "Dublin Fire Brigade — fire & rescue" },
+  { id: "medical", label: "NAS", description: "National Ambulance Service — EMS" },
+  { id: "hazmat", label: "Hazmat", description: "Hazardous materials response unit" },
 ];
 
 export function LoginPage() {
@@ -45,7 +45,9 @@ export function LoginPage() {
             RapidResponse Command
           </span>
         </div>
-        <p className="text-xs text-slate-500">Dublin Emergency Communications Centre</p>
+        <p className="text-xs text-slate-500">
+          Dublin Emergency Communications Centre · DECC-01
+        </p>
       </div>
 
       {/* Login card */}
@@ -56,9 +58,9 @@ export function LoginPage() {
             <ShieldCheck className="h-4 w-4 text-blue-300" />
           </div>
           <div>
-            <h1 className="text-sm font-semibold text-slate-100">Dispatcher Sign-In</h1>
+            <h1 className="text-sm font-semibold text-slate-100">DECC Dispatcher Sign-In</h1>
             <p className="text-xs text-slate-400">
-              Select your department, then authenticate with Google SSO.
+              Select your service, then authenticate with your Google work account.
             </p>
           </div>
         </div>
@@ -185,9 +187,14 @@ export function LoginPage() {
         </div>
       </section>
 
-      <p className="mt-6 text-center text-xs text-slate-600">
-        Secured with Google SSO · Department access controlled by admin
-      </p>
+      <div className="mt-6 flex flex-col items-center gap-1.5">
+        <p className="text-center text-xs text-slate-600">
+          Secured with Google SSO · Access controlled by DECC administration
+        </p>
+        <p className="text-center text-[10px] text-slate-700">
+          Authorized personnel only — all access is logged and audited
+        </p>
+      </div>
     </main>
   );
 }
