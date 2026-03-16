@@ -31,6 +31,17 @@ build/
 # OpenCode tool config
 opencode.json
 .opencode/prompts/
+.opencode/skills/
+
+# Claude agent memory and config (AI tool internals — not project docs)
+.claude/
+backend/.claude/
+frontend/.claude/
+
+# Internal planning and sprint spec files (not public documentation)
+FEATURES.md
+FINAL_SPRINT_SPEC.md
+ROLE_BASED_DASHBOARD_SPEC.md
 
 # Playwright test config and artifacts
 playwright.config.ts
