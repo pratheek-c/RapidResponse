@@ -350,7 +350,7 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
     const res = await fetch(`${API_BASE}/dispatch/question`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ incident_id: incident.id, question, officer_id: officerId }),
+      body: JSON.stringify({ incident_id: incident.id, question, officer_id: officerId, role: session?.role }),
     });
     if (!res.ok) {
       setQaEntries((prev) => prev.filter((e) => e.id !== optimisticEntry.id));
@@ -370,6 +370,8 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
           incident_id: incident.id,
           reason: "Dispatcher escalation from DECC dashboard",
           requested_unit_types: requested,
+          role: session?.role,
+          officer_id: officerId,
         }),
       });
       if (!res.ok) throw new Error(`Server responded ${res.status}`);
@@ -385,7 +387,7 @@ export function IncidentDetail({ incident, units, officerId, onBack }: IncidentD
       const response = await fetch(`${API_BASE}/dispatch/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ incident_id: incident.id }),
+        body: JSON.stringify({ incident_id: incident.id, role: session?.role, officer_id: officerId }),
       });
       if (!response.ok) throw new Error(`Server responded ${response.status}`);
       setSummaryOpen(true);

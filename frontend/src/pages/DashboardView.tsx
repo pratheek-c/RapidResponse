@@ -5,6 +5,7 @@ import { Header } from "@/components/common/Header";
 import { MapLegend } from "@/components/map/MapLegend";
 import { CommandMap } from "@/components/map/CommandMap";
 import { IncidentList } from "@/components/incidents/IncidentList";
+import { UnitOfficerIncidentList } from "@/components/incidents/UnitOfficerIncidentList";
 import { IncidentDetail } from "@/components/incidents/IncidentDetail";
 import { BackupAlertBanner } from "@/components/common/BackupAlertBanner";
 import { AssignmentAlertBanner } from "@/components/common/AssignmentAlertBanner";
@@ -343,15 +344,23 @@ export function DashboardView() {
       <StatsBar incidents={incidents} units={units} connected={connected} />
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: incident list — filter state is lifted so the map stays in sync */}
+        {/* Left: incident list — unit officers get a three-tab view; dispatchers get the flat filter list */}
         <div className="hidden w-[300px] shrink-0 overflow-y-auto lg:block">
-          <IncidentList
-            incidents={incidents}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            filter={mapFilter}
-            onFilterChange={setMapFilter}
-          />
+          {session?.role === "unit_officer" ? (
+            <UnitOfficerIncidentList
+              incidents={incidents}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+            />
+          ) : (
+            <IncidentList
+              incidents={incidents}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              filter={mapFilter}
+              onFilterChange={setMapFilter}
+            />
+          )}
         </div>
 
         {/* Centre: map */}

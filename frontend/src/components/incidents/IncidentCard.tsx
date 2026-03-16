@@ -82,7 +82,7 @@ export function IncidentCard({ incident, selected, onSelect }: IncidentCardProps
       await fetch(`${API_BASE}/dispatch/take`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ incident_id: incident.id, unit_id: myUnitId }),
+        body: JSON.stringify({ incident_id: incident.id, unit_id: myUnitId, role: session?.role }),
       });
       // The SSE stream will update the incident in state
     } catch {

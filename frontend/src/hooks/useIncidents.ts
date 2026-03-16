@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSSE } from "@/hooks/useSSE";
+import { useSession } from "@/context/SessionContext";
 import type {
   ApiResponse,
   DashboardIncident,
@@ -11,6 +12,17 @@ import type {
 } from "@/types/dashboard";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+function parseAssignedUnits(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) return parsed.map(String);
+  } catch {
+    // fall through to comma-split
+  }
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
 
 type EscalationMap = Record<string, SseEscalationSuggestionEvent["data"]>;
 type ExtractionMap = Record<string, ExtractionData>;
@@ -110,10 +122,19 @@ export function useIncidents() {
   const [extractions, setExtractions] = useState<ExtractionMap>({});
   const [escalations, setEscalations] = useState<EscalationMap>({});
   const { connected, lastEvent } = useSSE();
+  const { session } = useSession();
+
+  /** Build role-identifying headers so the backend can filter data appropriately */
+  const roleHeaders = useCallback((): HeadersInit => {
+    if (!session) return {};
+    const headers: Record<string, string> = { "X-Role": session.role };
+    if (session.unit?.id) headers["X-Unit-Id"] = session.unit.id;
+    return headers;
+  }, [session]);
 
   const fetchAll = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE}/incidents`);
+      const response = await fetch(`${API_BASE}/incidents`, { headers: roleHeaders() });
       if (!response.ok) return;
       const payload = (await response.json()) as ApiResponse<DashboardIncident[]>;
       if (!payload.ok) return;
@@ -121,7 +142,7 @@ export function useIncidents() {
     } catch {
       // non-fatal for live dashboard
     }
-  }, []);
+  }, [roleHeaders]);
 
   useEffect(() => {
     void fetchAll();
@@ -134,7 +155,7 @@ export function useIncidents() {
       const data = lastEvent.data as { incident_id: string };
       void (async () => {
         try {
-          const response = await fetch(`${API_BASE}/incidents/${data.incident_id}`);
+          const response = await fetch(`${API_BASE}/incidents/${data.incident_id}`, { headers: roleHeaders() });
           if (!response.ok) return;
           const payload = (await response.json()) as ApiResponse<DashboardIncident>;
           if (!payload.ok) return;
@@ -217,6 +238,37 @@ export function useIncidents() {
             : inc
         )
       );
+      return;
+    }
+
+    if (lastEvent.type === "unit_dispatched") {
+      const evData = lastEvent.data as { incident_id: string; unit_id: string; status?: IncidentStatus };
+      setIncidents((prev) =>
+        prev.map((inc) => {
+          if (inc.id !== evData.incident_id) return inc;
+          const existing = parseAssignedUnits(inc.assigned_units);
+          const updated = existing.includes(evData.unit_id) ? existing : [...existing, evData.unit_id];
+          return {
+            ...inc,
+            assigned_units: JSON.stringify(updated),
+            status: evData.status ?? "dispatched",
+          };
+        })
+      );
+      return;
+    }
+
+    if (lastEvent.type === "backup_accepted") {
+      const evData = lastEvent.data as { incident_id: string; responding_unit: string };
+      setIncidents((prev) =>
+        prev.map((inc) => {
+          if (inc.id !== evData.incident_id) return inc;
+          const existing = parseAssignedUnits(inc.assigned_units);
+          const updated = existing.includes(evData.responding_unit) ? existing : [...existing, evData.responding_unit];
+          return { ...inc, assigned_units: JSON.stringify(updated) };
+        })
+      );
+      return;
     }
   }, [lastEvent]);
 
