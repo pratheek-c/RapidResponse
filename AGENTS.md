@@ -1,12 +1,16 @@
 # RapidResponse.ai — Agent Guide
 
-This file is the authoritative context document for any AI coding agent (OpenCode, GitHub Copilot, Cursor, etc.) working in this repository. Read this fully before making any changes.
+This is the authoritative context document for any AI coding agent working in this repository.
+Read it fully before making any changes.
 
 ---
 
 ## Project Identity
 
-**RapidResponse.ai** is a municipal-grade AI-powered 911 emergency dispatch platform. An AI voice agent (AWS Bedrock Nova Sonic 2) autonomously handles incoming emergency calls from a browser, triages callers using RAG-backed emergency protocols, classifies incidents, and surfaces live data to human dispatchers via a React dashboard.
+**RapidResponse.ai** is a municipal-grade AI-powered 911 emergency dispatch platform. An AI voice
+agent (AWS Bedrock Nova Sonic 2) autonomously handles incoming emergency calls from a browser,
+triages callers using RAG-backed emergency protocols, classifies incidents, and surfaces live data
+to human dispatchers via a React dashboard.
 
 ---
 
@@ -14,341 +18,196 @@ This file is the authoritative context document for any AI coding agent (OpenCod
 
 **This project uses [Bun](https://bun.sh) as the JavaScript/TypeScript runtime. Not Node.js.**
 
-| Rule | Correct | Wrong |
+| Task | Correct | Wrong |
 |---|---|---|
 | Run scripts | `bun run <script>` | `npm run`, `npx`, `node` |
 | Install packages | `bun install` | `npm install`, `yarn`, `pnpm` |
-| Add a package | `bun add <pkg>` | `npm install <pkg>` |
+| Add a package | `bun add <pkg> --filter backend` | `npm install <pkg>` |
 | Execute a file | `bun src/index.ts` | `ts-node`, `tsx`, `node` |
 | Run tests | `bun test` | `jest`, `vitest`, `mocha` |
-| Run scripts directly | `bun backend/scripts/seed.ts` | `npx ts-node ...` |
 
-**Never** suggest `npm`, `npx`, `yarn`, `pnpm`, `ts-node`, or `tsx` commands. All TypeScript runs natively via Bun.
+**Never** use `npm`, `npx`, `yarn`, `pnpm`, `ts-node`, or `tsx`.
 
 ---
 
-## Language
+## Build, Lint & Test Commands
 
-- TypeScript strict mode throughout (`"strict": true` in all `tsconfig.json`)
-- **No `any` types.** Use `unknown` with type guards if the shape is uncertain
-- No `// @ts-ignore` or `// @ts-expect-error` without an accompanying comment explaining why
-- Use `type` for object shapes, `interface` only when extension is intended
-- All async functions must handle errors explicitly — no unhandled promise rejections
-- Use named exports; avoid default exports except for React components
+```bash
+# Install all workspace deps
+bun install
+
+# Type-check (no emit)
+bun run --filter backend  tsc --noEmit
+bun run --filter frontend tsc --noEmit
+
+# Run all tests
+bun test
+
+# Run backend tests only
+bun test --filter backend
+
+# Run a single test file
+bun test backend/src/__tests__/services.test.ts
+
+# Run a single named test (regex match on test description)
+bun test --test-name-pattern "creates an incident"
+
+# Dev servers
+bun run dev:backend    # backend only (watch mode)
+bun run dev:frontend   # frontend only (Vite)
+
+# Production builds
+bun run build:backend  # bun build → backend/dist/
+bun run build:frontend # tsc && vite build → frontend/dist/
+
+# Database
+bun run db:migrate     # run all pending SQL migrations
+bun run db:seed        # seed with sample data
+bun run ingest:protocols  # chunk + embed protocol docs into LanceDB
+```
 
 ---
 
 ## Monorepo Layout
 
-This is a **Bun workspace** monorepo.
+Bun workspace monorepo. Root `package.json` declares `workspaces: ["backend", "frontend"]`.
 
 ```
 rapidresponse/
-├── package.json          # Root workspace — lists workspaces: ["backend", "frontend"]
-├── bunfig.toml           # Bun config
-├── AGENTS.md             # This file
-├── README.md
-├── .env                  # Local env (never commit)
-├── .env.example          # Template (commit this)
-├── .opencode/
-│   └── skills/           # OpenCode skill definitions
-├── backend/              # Bun HTTP server + WebSocket + REST API
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── src/
-└── frontend/             # React 18 + TypeScript + Vite dispatcher dashboard
-    ├── package.json
-    ├── tsconfig.json
+├── package.json          # Root workspace
+├── bunfig.toml
+├── .env                  # Local env — never commit
+├── .env.example          # Committed template
+├── backend/
+│   ├── src/
+│   │   ├── agents/       # novaAgent.ts, reportAgent.ts, triageAgent.ts, dispatchBridgeAgent.ts
+│   │   ├── config/env.ts # Env validation — lazy singleton
+│   │   ├── db/           # libsql.ts, lancedb.ts, migrations/
+│   │   ├── routes/       # One file per REST resource
+│   │   ├── services/     # incidentService, ragService, storageService, sseService, …
+│   │   ├── types/        # Shared backend types
+│   │   └── ws/           # callHandler.ts (WebSocket)
+│   └── scripts/          # ingest.ts, seed.ts, migrate.ts
+└── frontend/
     └── src/
-```
-
-When adding a dependency:
-- `bun add <pkg> --filter backend` — adds to backend workspace
-- `bun add <pkg> --filter frontend` — adds to frontend workspace
-- `bun add <pkg>` at root — adds to root (for shared dev tooling only)
-
----
-
-## Key Services
-
-### AWS Bedrock — Nova Sonic 2 (Voice Agent)
-
-- **File:** `backend/src/agents/novaAgent.ts`
-- Nova Sonic handles the full caller interaction. It is NOT just a transcription tool — it speaks back to the caller and follows a protocol-driven conversation.
-- Uses `@aws-sdk/client-bedrock-runtime` with `InvokeModelWithBidirectionalStreamCommand`
-- Requires `@smithy/node-http-handler` (`NodeHttp2Handler`) — Nova Sonic uses HTTP/2 only
-- Audio format: PCM 16-bit, 16kHz mono input / 24kHz mono output (`audio/lpcm`, base64-encoded)
-- Audio frames are ~32ms each; audio data is base64-encoded in every `audioInput` event
-- Maximum session duration: 8 minutes. Implement session renewal at 7m30s for long calls
-- The Nova Sonic system prompt includes: role definition, city/department context, current RAG protocol context (injected per call), tool definitions
-- Nova Sonic uses **tool use** to trigger backend actions:
-  - `classify_incident(type, priority)` — fires when AI has enough info to classify
-  - `get_protocol(query)` — requests a RAG lookup from LanceDB
-  - `dispatch_unit(incident_id, unit_type)` — requests dispatcher notification
-- Tool result must be sent on `contentEnd` with `stopReason: "TOOL_USE"` — **not** on the `toolUse` event itself
-- On `{ "interrupted": true }` in a `textOutput` block, flush the audio output queue immediately (barge-in)
-- **Do NOT** use the OpenAI SDK or OpenAI Realtime API. AWS Bedrock SDK only.
-
-### AWS Bedrock — Titan Embeddings v2
-
-- **File:** `backend/src/services/ragService.ts`
-- Used to embed protocol document chunks and incident summaries
-- Model ID stored in `BEDROCK_TITAN_EMBED_MODEL_ID` env var
-- Returns 1024-dimension float32 vectors
-
-### LanceDB
-
-- **File:** `backend/src/db/lancedb.ts`
-- Open-source embedded vector database. Package: `@lancedb/lancedb` (not the legacy `vectordb` package). Peer dep: `apache-arrow >=15.0.0 <=18.1.0`.
-- Data directory: `LANCEDB_PATH` env var (default `./data/lancedb`)
-- Three collections:
-
-  | Collection | Purpose |
-  |---|---|
-  | `protocols` | Chunked emergency protocol docs for RAG |
-  | `incidents_history` | Past incident summaries for pattern matching |
-  | `locations` | Geocoded addresses with S2 cell IDs for proximity search |
-
-- S2 geometry is used for location indexing. S2 cell tokens are stored as `Utf8` strings and used as pre-filters alongside cosine vector search. Use `s2-geometry` (pure JS, no native bindings) — do **not** use the archived `mapbox/node-s2` package.
-- Always use `distanceType("cosine")` — must match at both index creation and query time. The default `"l2"` is incorrect for Titan embeddings.
-- **LanceDB is for vectors only.** Never store structured relational data in LanceDB.
-
-### libSQL (Open-Source Embedded)
-
-- **File:** `backend/src/db/libsql.ts`
-- Client: `@libsql/client`
-- **Default mode: embedded file** — `LIBSQL_URL=file:./data/rapidresponse.db`. No server, no cloud account required. Data lives on disk next to the app.
-- **Optional networked mode:** run the open-source `sqld` server (`ghcr.io/tursodatabase/libsql-server`) and set `LIBSQL_URL=http://localhost:8080`. Set `LIBSQL_AUTH_TOKEN` only if sqld is configured with auth.
-- Connection: `createClient({ url: env.LIBSQL_URL, authToken: env.LIBSQL_AUTH_TOKEN })` — works for both `file:` and `http:` schemes identically.
-- All structured data lives here: incidents, transcriptions, units, dispatches
-- Schema is managed via numbered SQL migration files in `backend/src/db/migrations/`
-- **libSQL is for structured relational data only.** Never put embeddings or binary blobs here.
-
-### AWS S3
-
-- **File:** `backend/src/services/storageService.ts`
-- Stores raw audio recordings uploaded from the WebSocket call handler
-- Key format: `recordings/{incident_id}/audio_{unix_timestamp}.webm`
-- Final transcript JSON exported to: `recordings/{incident_id}/transcript.json`
-- Always use presigned URLs for playback — never expose bucket directly
-
----
-
-## Data Flow — Full Call Lifecycle
-
-```
-1. Caller opens browser, navigates to /call
-2. CallerView.tsx requests mic permission, opens WebSocket to ws://backend/call
-3. Browser sends { type: "call_start", callerId: "...", location: "..." }
-4. WebSocket handler creates a new incident record in libSQL (status: "active")
-5. WebSocket handler opens bidirectional stream to Nova Sonic (Bedrock)
-6. Audio frames flow: Browser → WebSocket → novaAgent.ts → Bedrock
-7. Bedrock audio response flows back: Bedrock → novaAgent.ts → WebSocket → Browser
-8. Each transcript turn is extracted and saved: transcriptionService.ts → libSQL
-9. Audio chunks are buffered and uploaded: storageService.ts → S3
-10. When Nova Sonic fires classify_incident tool:
-    - incidentService.ts updates incident type + priority in libSQL
-    - SSE event pushed to dispatcher dashboard
-11. When Nova Sonic fires get_protocol tool:
-    - ragService.ts queries LanceDB protocols collection
-    - Top-3 chunks returned as context injected into next Nova Sonic turn
-12. Call ends (caller hangs up or Nova Sonic determines resolution):
-    - Full transcript exported to S3
-    - Incident status updated to "dispatched" or "resolved"
-    - Final SSE event pushed to dashboard
+        ├── components/   # PascalCase.tsx
+        ├── hooks/        # useCallSocket.ts, useIncidents.ts, …
+        ├── pages/        # CallerView.tsx, DashboardView.tsx, …
+        └── types/        # Frontend types
 ```
 
 ---
 
-## Database Rules
+## TypeScript Rules
 
-1. **Never mix concerns.** libSQL = structured data. LanceDB = vectors. S3 = binary/audio.
-2. All libSQL queries use parameterized statements. No string interpolation in SQL ever.
-3. All migrations are numbered sequentially: `001_`, `002_`, etc. Never modify an existing migration — always add a new one.
-4. IDs are UUIDs generated with `crypto.randomUUID()`. Never use auto-increment integers.
-5. Timestamps are stored as ISO 8601 strings in libSQL (`TEXT` column).
-6. All libSQL operations are wrapped in try/catch — database errors must not crash the WebSocket handler.
+Both workspaces use `"strict": true`. The backend additionally enforces:
 
----
+- `noImplicitAny: true`
+- `noUnusedLocals: true`, `noUnusedParameters: true`
+- `exactOptionalPropertyTypes: true`
+- `noUncheckedIndexedAccess: true`
 
-## RAG Convention
-
-1. Protocol documents live in `backend/protocols/` as `.pdf`, `.txt`, or `.md` files
-2. Ingestion script: `backend/scripts/ingest.ts`, run via `bun run ingest:protocols`
-3. Chunking strategy: split by section header, max 512 tokens per chunk, 50-token overlap
-4. Each chunk stored in LanceDB `protocols` collection with fields: `id`, `source_file`, `section`, `chunk_text`, `embedding`, `priority_keywords`
-5. At query time, the top-3 chunks by cosine similarity are returned and injected into the Nova Sonic system prompt as a `[PROTOCOL CONTEXT]` block
-6. Never hard-code protocol content in code. Always retrieve from LanceDB.
+**Hard rules:**
+- **No `any`** — use `unknown` with type guards if shape is uncertain
+- No `// @ts-ignore` or `// @ts-expect-error` without an explanatory comment
+- Use `type` for object shapes; use `interface` only when extension/merging is intended
+- All async functions must explicitly handle errors — no unhandled promise rejections
+- Named exports only; default exports are allowed only for React components
+- Import with `.ts` / `.tsx` extensions in backend source (Bun requires them; `allowImportingTsExtensions: true`)
+- Frontend path alias: `@/` maps to `src/`
 
 ---
 
 ## Naming Conventions
 
-### Files
-- All source files: `camelCase.ts`
-- React components: `PascalCase.tsx`
-- Migration files: `NNN_snake_case_description.sql`
-- Protocol documents: any name, stored in `backend/protocols/`
+| Thing | Convention | Example |
+|---|---|---|
+| Source files | `camelCase.ts` | `ragService.ts` |
+| React components | `PascalCase.tsx` | `IncidentDetail.tsx` |
+| Migration files | `NNN_snake_case.sql` | `009_roles.sql` |
+| TS types/interfaces | `PascalCase` | `IncidentType` |
+| Variables/functions | `camelCase` | `classifyIncident` |
+| True constants | `SCREAMING_SNAKE_CASE` | `BEDROCK_NOVA_SONIC_MODEL_ID` |
+| DB tables | `snake_case` plural | `transcription_turns` |
+| DB columns | `snake_case` | `incident_id`, `created_at` |
+| REST endpoints | `kebab-case` plural nouns | `/incidents`, `/dispatch` |
 
-### Database
-- Table names: `snake_case` plural (e.g. `incidents`, `transcriptions`)
-- Column names: `snake_case` (e.g. `incident_id`, `created_at`)
-- S3 keys: `recordings/{incident_id}/audio_{unix_ms}.webm`
+---
 
-### Routes
-- REST endpoints: `kebab-case`, plural nouns (e.g. `/incidents`, `/units`, `/dispatch`)
-- WebSocket endpoint: `/call`
-- SSE endpoint: `/events`
+## Error Handling
 
-### TypeScript
-- Types and interfaces: `PascalCase`
-- Variables and functions: `camelCase`
-- Constants: `SCREAMING_SNAKE_CASE` for true constants (env var names, model IDs)
-- Enum values: `PascalCase`
+- Wrap all libSQL operations in `try/catch` — DB errors must never crash the WebSocket handler
+- Route handlers return typed JSON error responses: `{ ok: false, error: string }`
+- Bedrock stream errors call `callbacks.onError(err)` and clean up the session — never `throw` from a stream event handler
+- Use structured logging (`console.error("[module] message:", err)`) — never bare `console.log` for errors
+- Required env vars throw at startup via `requireEnv()` in `config/env.ts` — fail fast, never silently
+
+---
+
+## Database Rules
+
+1. **libSQL** = structured relational data only (incidents, transcriptions, units, dispatches)
+2. **LanceDB** = vectors only (protocols, incident history, locations)
+3. **S3** = binary data only (audio chunks `.webm`, transcript exports `.json`)
+4. All SQL statements use parameterized queries — no string interpolation ever
+5. IDs are UUIDs: `crypto.randomUUID()` — never auto-increment integers
+6. Timestamps: ISO 8601 strings in `TEXT` columns
+7. Migrations are numbered `NNN_` sequentially — **never modify** an existing migration file
+8. `distanceType("cosine")` must be set consistently for LanceDB — the default `"l2"` is wrong for Titan embeddings
+9. Always use presigned URLs for S3 playback — never expose bucket URLs directly
+
+---
+
+## Testing Conventions
+
+- Test runner: `bun test` (Jest-compatible API via `bun:test`)
+- Test files: `backend/src/__tests__/*.test.ts`
+- Import from `bun:test`: `describe`, `it`, `expect`, `beforeEach`, `afterEach`
+- Set required `process.env` values **before** any import that triggers `env.ts` loading
+- Use `createClient({ url: ":memory:" })` for libSQL in every test — never touch the real DB
+- Apply all migrations to the in-memory DB via `db.executeMultiple(sql)` in a `buildTestDb()` helper
+- Mock Bedrock with `bun:mock` — no real AWS credentials required to run any test
+- Mock S3 via `bun:mock` — never make real S3 calls in tests
+- LanceDB: use a temp path `./data/lancedb-test-${crypto.randomUUID()}` and clean up after
+
+---
+
+## Key Architectural Facts
+
+- **Nova Sonic** requires HTTP/2: use `NodeHttp2Handler` from `@smithy/node-http-handler`
+- Tool results must be sent on `contentEnd` with `stopReason: "TOOL_USE"` — not on the `toolUse` event
+- `inputSchema.json` in tool specs is a **JSON string** (`JSON.stringify({...})`), not an object
+- `turnDetectionConfiguration` is not supported by `amazon.nova-2-sonic-v1:0` — omit it
+- Nova Sonic needs a text trigger (`"."` with `interactive: true`) to speak first; silence alone returns only `usageEvent`
+- Browser audio must be raw **PCM 16-bit 16 kHz mono** via `ScriptProcessorNode` — `MediaRecorder` produces WebM/Opus which Nova Sonic cannot decode
+- `Bun.serve()` must set `idleTimeout: 255` — the 10s default kills SSE connections
+- Caddy must use `flush_interval -1` on the `/events` proxy — without it SSE events are buffered
 
 ---
 
 ## Do NOT
 
-These are hard rules. Never violate them.
-
-- **Never use `npm`, `npx`, `yarn`, `pnpm`, `ts-node`, or `tsx`**. Bun only.
-- **Never use the OpenAI SDK or OpenAI Realtime API**. This project uses AWS Bedrock.
-- **Never store embeddings or audio in libSQL**. LanceDB and S3 only.
-- **Never store structured relational data in LanceDB**. libSQL only.
-- **Never expose S3 bucket URLs directly**. Always use presigned URLs.
-- **Never use `any` in TypeScript**. Use `unknown` with type guards.
-- **Never interpolate variables into SQL strings**. Always use parameterized queries.
-- **Never modify existing migration files**. Always create a new numbered migration.
-- **Never commit `.env`**. Only `.env.example` is committed.
-- **Never call Bedrock with hardcoded model IDs**. Always read from env vars.
-- **Never use `console.log` for errors in production paths**. Use structured logging.
-
----
-
-## Testing
-
-- Test runner: `bun test` (built-in Bun test runner, Jest-compatible API)
-- Test files: co-located with source as `*.test.ts`, or in `backend/src/__tests__/`
-- Run all tests: `bun test`
-- Run backend tests only: `bun test --filter backend`
-
-### Mocking Strategy
-
-- Bedrock calls: mock `@aws-sdk/client-bedrock-runtime` using `bun:mock`
-- libSQL: use an in-memory libSQL client (`createClient({ url: ":memory:" })`)
-- LanceDB: use a temp directory (`/tmp/lancedb-test-{uuid}`) and clean up after each test
-- S3: mock `@aws-sdk/client-s3` — never make real S3 calls in tests
-- No real AWS credentials should be required to run the test suite
----
-
-## Environment Variables
-
-All required env vars are documented in `.env.example`. The canonical list:
-
-| Variable | Used In | Notes |
-|---|---|---|
-| `AWS_REGION` | All AWS services | e.g. `us-east-1` |
-| `AWS_ACCESS_KEY_ID` | All AWS services | IAM key |
-| `AWS_SECRET_ACCESS_KEY` | All AWS services | IAM secret |
-| `BEDROCK_NOVA_SONIC_MODEL_ID` | `novaAgent.ts` | e.g. `amazon.nova-2-sonic-v1:0` |
-| `BEDROCK_TITAN_EMBED_MODEL_ID` | `ragService.ts` | Titan Embeddings v2 model ID |
-| `LIBSQL_URL` | `libsql.ts` | `file:./data/rapidresponse.db` (default) or `http://localhost:8080` (sqld) |
-| `LIBSQL_AUTH_TOKEN` | `libsql.ts` | Optional — only required when using sqld with auth enabled |
-| `S3_BUCKET_NAME` | `storageService.ts` | S3 bucket for recordings |
-| `S3_RECORDINGS_PREFIX` | `storageService.ts` | Default: `recordings/` |
-| `LANCEDB_PATH` | `lancedb.ts` | Local path, default `./data/lancedb` |
-| `PORT` | `server.ts` | HTTP server port, default `3000` |
-| `FRONTEND_URL` | `server.ts` | CORS allowed origin |
-| `DISPATCH_CITY` | `novaAgent.ts` | City name injected into Nova Sonic system prompt |
-| `DISPATCH_DEPT` | `novaAgent.ts` | Department name injected into Nova Sonic system prompt |
+- Use `npm`, `npx`, `yarn`, `pnpm`, `ts-node`, or `tsx`
+- Use the OpenAI SDK or OpenAI Realtime API — AWS Bedrock only
+- Store embeddings or audio in libSQL
+- Store relational data in LanceDB
+- Use `any` in TypeScript
+- Interpolate variables into SQL strings
+- Modify existing migration files — always add a new numbered one
+- Commit `.env` — only `.env.example` is committed
+- Hardcode Bedrock model IDs — always read from env vars
+- Expose S3 bucket URLs — always use presigned URLs
 
 ---
 
 ## Available OpenCode Skills
 
-The following skills are available in `.opencode/skills/`. Load them when the relevant task comes up.
+Load these from `.opencode/skills/` when the relevant task comes up:
 
-| Skill File | When to Use |
+| Skill | When to use |
 |---|---|
-| `ingest-protocols.md` | User wants to add, update, or re-ingest emergency protocol documents |
-| `seed-db.md` | User wants to populate the database with sample/test data |
-| `run-migrations.md` | User changes the DB schema, adds a column, or sets up a fresh environment |
-| `build-docker.md` | User wants to build the Docker image or push to AWS ECR |
-| `deploy-ecs.md` | User wants to deploy a new version to AWS ECS |
-
-
- ---
-    backend/src/agents/novaAgent.ts
-
-    - encodeChunk: Wraps events as { chunk: { bytes: JSON.stringify({ event: { [eventType]: payload } }) } }
-    - turnDetectionConfiguration removed from sessionStart — not supported by amazon.nova-2-sonic-v1:0 (Nova 2 Sonic); caused "unexpected
-    error"
-    - toolConfiguration tools: Changed inputSchema.json back to JSON.stringify({...}) (JSON string, not object) — Nova Sonic bidirectional
-    stream requires doubly-encoded JSON string
-    - audioType: "SPEECH" kept in audioOutputConfiguration (confirmed correct per AWS Python examples)
-    - Text trigger added: USER text content "." with interactive: true before AUDIO content — makes Nova Sonic speak first ("911, what's your
-    emergency?")
-    - Silence approach removed: replaced with text trigger
-    - Transcript accumulation: uses currentTextBlock (stack-based) instead of Map, since response contentStart has no contentName
-    - Tool result format: role: "TOOL", toolStatus: "SUCCESS"/"ERROR", toolResultConfiguration: { toolUseId, toolStatus }
-    - System prompt: brief, empathetic, no formatting, 1-2 sentences per turn, handles interruptions
-    - Session renewal timer: 7m30s timeout
-
-    backend/src/agents/reportAgent.ts
-
-    - Conditional credentials: uses env vars if present, otherwise falls back to AWS profile
-
-    backend/src/services/ragService.ts
-
-    - Fixed TypeScript type: InvokeModelCommandOutput instead of Awaited<ReturnType<...>>
-    - Removed explicit credentials block (SDK auto-reads from env)
-
-    backend/src/services/storageService.ts
-
-    - Added followRegionRedirects: true to S3Client (bucket region mismatch fix)
-    - Conditional credentials pattern
-
-    backend/src/config/env.ts
-
-    - AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN made optional (string | undefined)
-    - AWS_PROFILE added as optional field
-    - Only AWS_REGION required
-
-    backend/src/server.ts
-
-    - Added idleTimeout: 255 to Bun.serve() — prevents SSE connections timing out at 10s default
-
-    backend/data/mock/dispatchers.json (created)
-
-    - Schema matches reportAgent.ts MockData type exactly
-    - Dispatchers: status: "on_duty", shift, role, certifications, assigned_zones, station: { desk, coords, address }
-    - Zones: bbox: { sw, ne }, risk_level, primary_units
-    - Hospitals: coords, trauma_level, ER_beds_available, helipad, specialties
-
-    backend/.env (symlink)
-
-    - backend/.env symlinked to project root .env so Bun finds credentials when run from backend/
-
-    frontend/src/hooks/useCallSocket.ts
-
-    - Replaced MediaRecorder (WebM/Opus) with ScriptProcessorNode for raw PCM 16kHz 16-bit mono — Nova Sonic requires LPCM
-    - Added AudioContext.resume() before playback (browser auto-suspend fix)
-    - Added stopCapture() helper for proper cleanup on call end
-
-    frontend/src/pages/CallerView.tsx
-
-    - Removed useEffect auto-arm — call only starts on "Call 911" button click
-    - Removed hasAutoArmed ref
-
-    .env.example
-
-    - Model IDs updated to cross-region inference profile format: us.amazon.nova-sonic-v1:0, us.amazon.nova-lite-v1:0,
-    us.amazon.titan-embed-text-v2:0
-
-    ---
-    Key discoveries:
-    - turnDetectionConfiguration is not supported by amazon.nova-2-sonic-v1:0
-    - Nova 2 Sonic requires text trigger ("." with interactive: true) to speak first — silence alone only returns usageEvent
-    - inputSchema.json in tool specs must be a JSON string (doubly encoded), not an object
-    - AWS sandbox in eu-north-1 uses amazon.nova-2-sonic-v1:0 directly (no cross-region inference profile needed)
+| `ingest-protocols.md` | Adding or re-ingesting emergency protocol documents |
+| `seed-db.md` | Populating the database with sample/test data |
+| `run-migrations.md` | DB schema changes or fresh environment setup |
+| `build-docker.md` | Building Docker images or pushing to AWS ECR |
+| `deploy-ecs.md` | Deploying a new version to AWS ECS |
